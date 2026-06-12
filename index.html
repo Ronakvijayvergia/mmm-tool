@@ -127,312 +127,298 @@ function parseCSV(text) {
   return { data: rows, columns: headers };
 }
 
+/* ============================================================================
+   Realistic synthetic MMM data engine.
+   Each channel gets its OWN secular trend, seasonal timing, media-buying
+   cadence (flighting), launch/phase-out, adstock and saturation — so channel
+   trends are genuinely distinct instead of one shared seasonal wave.
+   (geometricAdstock is already defined elsewhere in the page.)
+   ========================================================================== */
+
+function makeRng(seed) {
+  var s = seed % 2147483647; if (s <= 0) s += 2147483646;
+  var spare = null;
+  function rand() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; }
+  function gauss() {
+    if (spare !== null) { var v = spare; spare = null; return v; }
+    var u = 0, w2 = 0; while (u === 0) u = rand(); while (w2 === 0) w2 = rand();
+    var mag = Math.sqrt(-2.0 * Math.log(u));
+    spare = mag * Math.sin(2 * Math.PI * w2);
+    return mag * Math.cos(2 * Math.PI * w2);
+  }
+  return { rand: rand, gauss: gauss };
+}
+
+/* Media-buying cadence multiplier for week w. */
+function flightFactor(pattern, w, R) {
+  switch (pattern) {
+    case 'flighted': return ((w % 6) < 3) ? 1.15 : 0.18;            /* ~3 wks on / 3 off */
+    case 'pulsed':   return 0.60 + 0.45 * Math.sin(2 * Math.PI * w / 7);
+    case 'bursty':   return R.rand() < 0.16 ? (1.9 + R.rand() * 1.1) : (0.35 + R.rand() * 0.35);
+    case 'monthly':  return ((w % 4) === 0) ? 1.85 : 0.28;          /* concentrated monthly drops */
+    case 'seasonal': return 1.0;                                    /* swing comes from seasAmp */
+    default:         return 1.0;                                    /* alwayson */
+  }
+}
+
+/* AR(1) smoothing strength by cadence (lower = spikier). */
+function persistenceFor(pattern) {
+  switch (pattern) {
+    case 'flighted': return 0.20;
+    case 'pulsed':   return 0.35;
+    case 'bursty':   return 0.12;
+    case 'monthly':  return 0.18;
+    case 'seasonal': return 0.55;
+    default:         return 0.55;
+  }
+}
+
+/* Launch ramp (0 before launchWeek, 8-wk ramp) and phase-out sunset. */
+function envelope(w, launchWeek, endWeek) {
+  var e = 1;
+  if (launchWeek && launchWeek > 0) {
+    if (w < launchWeek) return 0;
+    e *= Math.min(1, (w - launchWeek) / 8);
+  }
+  if (endWeek != null) {
+    if (w > endWeek) e *= Math.max(0, 1 - (w - endWeek) / 8);
+  }
+  return e;
+}
+
+/* One channel's weekly spend path. */
+function buildChannelSpend(ch, nWeeks, R) {
+  var out = new Array(nWeeks);
+  var prev = ch.base;
+  var sm = persistenceFor(ch.flight);
+  var driftDev = 0;                                                /* channel-specific medium-term drift */
+  for (var w = 0; w < nWeeks; w++) {
+    driftDev = 0.94 * driftDev + 0.05 * R.gauss();                /* mean-reverting AR(1), ~±15% */
+    if (driftDev > 0.45) driftDev = 0.45; else if (driftDev < -0.45) driftDev = -0.45;
+    var trend = Math.pow(1 + ch.growth, w / 52);                   /* secular growth/decline */
+    var seas = 1 + ch.seasAmp * Math.sin(2 * Math.PI * (w - ch.peakWeek) / 52);
+    if (seas < 0.15) seas = 0.15;
+    var fl = flightFactor(ch.flight, w, R);
+    var target = ch.base * trend * seas * fl * (1 + driftDev);     /* decorrelates similar channels */
+    var raw = target * (1 + ch.vol * R.gauss());                   /* idiosyncratic noise */
+    var sp = sm * prev + (1 - sm) * raw;                           /* smoothing */
+    prev = sp;
+    sp = sp * envelope(w, ch.launchWeek, ch.endWeek);              /* launch/sunset */
+    out[w] = Math.max(0, Math.round(sp));
+  }
+  return out;
+}
+
+/* Channel contribution to the KPI: geometric adstock + Hill saturation,
+   normalized by steady-state so high-adstock channels aren't over-credited,
+   and scaled so average contribution per dollar ≈ the channel's target ROAS. */
+function mediaContribSeries(spendArr, ch) {
+  var ad = geometricAdstock(spendArr, ch.decay);
+  var adSS = ch.base / (1 - ch.decay);                            /* steady-state reference */
+  var effect = ch.roas * ch.base * (1 + ch.satHalf);
+  return ad.map(function (a) {
+    var x = a / adSS;
+    var sat = x / (x + ch.satHalf);
+    return effect * sat;
+  });
+}
+
+/* Smooth seasonal bump centered on a week-of-year (circular). Returns 0..1. */
+function seasonalBump(w, centerWeek, widthWeeks) {
+  var dd = (w % 52) - centerWeek;
+  while (dd > 26) dd -= 52;
+  while (dd < -26) dd += 52;
+  return Math.exp(-(dd * dd) / (2 * widthWeeks * widthWeeks));
+}
+
+/* Shared assembler: media + calibrated baseline + controls + noise → rows. */
+function genIndustryData(spec, nWeeks) {
+  if (!nWeeks) nWeeks = 156;
+  var R = makeRng(spec.seed);
+  var base = new Date('2022-01-03');
+  var chs = spec.channels;
+
+  var series = chs.map(function (c) { return buildChannelSpend(c, nWeeks, R); });
+  var contribs = chs.map(function (c, i) { return mediaContribSeries(series[i], c); });
+
+  var mediaRef = chs.reduce(function (s, c) { return s + c.roas * c.base; }, 0);
+  var bs = spec.baseline.share;
+  var baseIntercept = mediaRef * bs / (1 - bs);
+
+  var data = [];
+  for (var w = 0; w < nWeeks; w++) {
+    var d = new Date(base); d.setDate(d.getDate() + w * 7);
+    var row = { date: d.toISOString().slice(0, 10) };
+    for (var i = 0; i < chs.length; i++) row[chs[i].name] = series[i][w];
+
+    var trend = Math.pow(1 + spec.baseline.growth, w / 52);
+    var seas = 1 + spec.baseline.seasAmp * Math.sin(2 * Math.PI * (w - spec.baseline.peakWeek) / 52);
+    var hol = 0;
+    spec.baseline.holidays.forEach(function (h) { hol += seasonalBump(w, h.week, h.width) * h.height; });
+    var baselineRev = baseIntercept * (trend * seas + hol);
+
+    var media = 0; for (var i = 0; i < chs.length; i++) media += contribs[i][w];
+
+    var ctl = spec.controls(w, R, row);
+    for (var k in ctl.columns) row[k] = ctl.columns[k];
+
+    var rev = (baselineRev + media + ctl.effect) * (1 + spec.noiseSd * R.gauss());
+    row[spec.kpiName] = Math.max(spec.kpiFloor, Math.round(rev));
+    data.push(row);
+  }
+  return data;
+}
+
+/* ── Media & Advertising (large multi-channel advertiser) ── */
 function generateSampleData(nWeeks) {
-  if (!nWeeks) nWeeks = 208;
-  const data = [];
-  const base = new Date("2022-01-03");
-  let s = 42;
-  const random = () => { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
-  const rn = () => random();
-  const rng = (lo, hi) => lo + random() * (hi - lo);
-
-  var prevSpend = {};
-  var chNames = ["tv_linear_spend","tv_streaming_spend","digital_display_spend","digital_video_spend","digital_programmatic_spend","social_facebook_spend","social_instagram_spend","social_tiktok_spend","search_google_spend","search_bing_spend","print_newspaper_spend","print_magazine_spend","radio_traditional_spend","radio_podcast_spend"];
-  var chBase =  [25000, 12000, 14000, 9000, 4500, 6000, 5500, 3500, 11000, 2800, 3500, 2500, 2800, 1800];
-  var chVol =   [6000,  3000,  3500,  2500, 1200, 1500, 1400, 1000, 3000,  800,  900,  700,  700,  500];
-  var chROI =   [4.2,   3.8,   3.0,   2.5,  2.0,  3.5,  3.2,  2.8,  5.5,  4.0,  1.5,  1.2,  1.8,  1.4];
-  var chDecay = [0.65,  0.50,  0.35,  0.30, 0.25, 0.20, 0.22, 0.18, 0.15, 0.12, 0.55, 0.50, 0.60, 0.40];
-
-  chNames.forEach(function(c, i) { prevSpend[c] = chBase[i]; });
-  var prevAdstocked = {};
-  chNames.forEach(function(c) { prevAdstocked[c] = 0; });
-
-  for (var w = 0; w < nWeeks; w++) {
-    var d = new Date(base);
-    d.setDate(d.getDate() + w * 7);
-    var dateStr = d.toISOString().slice(0, 10);
-    var month = d.getMonth() + 1;
-    var seasonMult = 1 + 0.18 * Math.sin(2 * Math.PI * (month - 3) / 12);
-    var s52 = Math.sin(2 * Math.PI * w / 52);
-    var s26 = Math.sin(2 * Math.PI * w / 26);
-
-    var row = { date: dateStr };
-    var totalMediaEffect = 0;
-
-    chNames.forEach(function(c, i) {
-      var spend = Math.max(100, Math.round((0.65 * prevSpend[c] + 0.35 * (chBase[i] + rng(-chVol[i], chVol[i]))) * seasonMult));
-      row[c] = spend;
-      prevSpend[c] = spend;
-      var adstocked = spend + chDecay[i] * prevAdstocked[c];
-      prevAdstocked[c] = adstocked;
-      var maxAd = chBase[i] * 3;
-      var norm = Math.min(adstocked / maxAd, 3.0);
-      var sat = 1 - 1 / (1 + Math.pow(norm / 0.5, 2.0));
-      totalMediaEffect += chROI[i] * spend * sat;
-    });
-
-    var organic = Math.max(0, Math.round(5000 + 15 * w + 800 * s52 + rng(-400, 400)));
-    var wom = Math.max(0, Math.round(1200 + rng(-200, 200)));
-    var confidence = Math.round((100 + 4 * Math.sin(2 * Math.PI * w / 104) + rng(-1.5, 1.5)) * 100) / 100;
-    var competitor = Math.max(0, Math.round(35000 + 8000 * Math.sin(2 * Math.PI * w / 52 + 0.8) + rng(-3000, 3000)));
-    var isHoliday = ([11, 12, 1, 7].indexOf(month) >= 0 && rn() < 0.3) ? 1 : 0;
-
-    var baseRev = 150000 + 200 * w + 20000 * s52 + 8000 * s26 + 35000 * isHoliday;
-    var orgEffect = 1.2 * organic + 4.0 * wom;
-    var extEffect = 500 * confidence - 0.1 * competitor;
-    var noise = rng(-8000, 8000);
-    var revenue = Math.max(50000, Math.round(baseRev + totalMediaEffect + orgEffect + extEffect + noise));
-
-    row.organic_traffic = organic;
-    row.word_of_mouth = wom;
-    row.consumer_confidence = confidence;
-    row.competitor_spend = competitor;
-    row.is_holiday = isHoliday;
-    row.revenue = revenue;
-    data.push(row);
-  }
-
-  return data;
+  return genIndustryData({
+    seed: 42,
+    kpiName: 'revenue', kpiFloor: 100000, noiseSd: 0.025,
+    channels: [
+      { name: 'tv_linear_spend',           base: 320000, roas: 1.7, decay: 0.65, satHalf: 3.0, growth: -0.18, seasAmp: 0.45, peakWeek: 49, flight: 'flighted', launchWeek: 0,  endWeek: null, vol: 0.08 },
+      { name: 'tv_streaming_spend',        base:  90000, roas: 2.6, decay: 0.55, satHalf: 3.2, growth:  0.55, seasAmp: 0.35, peakWeek: 48, flight: 'pulsed',   launchWeek: 0,  endWeek: null, vol: 0.10 },
+      { name: 'digital_display_spend',     base:  70000, roas: 1.9, decay: 0.30, satHalf: 1.8, growth: -0.06, seasAmp: 0.25, peakWeek: 46, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.11 },
+      { name: 'digital_video_spend',       base:  85000, roas: 2.4, decay: 0.40, satHalf: 2.8, growth:  0.22, seasAmp: 0.30, peakWeek: 26, flight: 'pulsed',   launchWeek: 0,  endWeek: null, vol: 0.12 },
+      { name: 'digital_programmatic_spend',base: 110000, roas: 2.7, decay: 0.25, satHalf: 2.5, growth:  0.35, seasAmp: 0.30, peakWeek: 45, flight: 'alwayson', launchWeek: 18, endWeek: null, vol: 0.13 },
+      { name: 'social_facebook_spend',     base: 130000, roas: 2.3, decay: 0.25, satHalf: 2.2, growth: -0.04, seasAmp: 0.30, peakWeek: 46, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.13 },
+      { name: 'social_instagram_spend',    base:  95000, roas: 2.5, decay: 0.25, satHalf: 2.4, growth:  0.12, seasAmp: 0.32, peakWeek: 44, flight: 'pulsed',   launchWeek: 0,  endWeek: null, vol: 0.14 },
+      { name: 'social_tiktok_spend',       base:  60000, roas: 2.2, decay: 0.20, satHalf: 2.6, growth:  0.65, seasAmp: 0.35, peakWeek: 45, flight: 'bursty',   launchWeek: 34, endWeek: null, vol: 0.24 },
+      { name: 'search_google_spend',       base: 175000, roas: 4.2, decay: 0.10, satHalf: 2.0, growth:  0.08, seasAmp: 0.40, peakWeek: 47, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.05 },
+      { name: 'search_bing_spend',         base:  28000, roas: 3.8, decay: 0.10, satHalf: 1.6, growth:  0.00, seasAmp: 0.30, peakWeek: 45, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.08 },
+      { name: 'print_newspaper_spend',     base:  45000, roas: 1.2, decay: 0.50, satHalf: 1.5, growth: -0.26, seasAmp: 0.30, peakWeek: 50, flight: 'monthly',  launchWeek: 0,  endWeek: 120,  vol: 0.07 },
+      { name: 'print_magazine_spend',      base:  38000, roas: 1.4, decay: 0.55, satHalf: 1.8, growth: -0.14, seasAmp: 0.35, peakWeek: 38, flight: 'monthly',  launchWeek: 0,  endWeek: null, vol: 0.07 },
+      { name: 'radio_traditional_spend',   base:  55000, roas: 1.6, decay: 0.60, satHalf: 2.2, growth: -0.12, seasAmp: 0.30, peakWeek: 42, flight: 'flighted', launchWeek: 0,  endWeek: null, vol: 0.08 },
+      { name: 'radio_podcast_spend',       base:  32000, roas: 2.8, decay: 0.45, satHalf: 2.8, growth:  0.50, seasAmp: 0.28, peakWeek: 4,  flight: 'bursty',   launchWeek: 0,  endWeek: null, vol: 0.18 }
+    ],
+    baseline: { share: 0.60, growth: 0.06, seasAmp: 0.18, peakWeek: 48,
+      holidays: [ { week: 47, width: 2.5, height: 0.22 }, { week: 50, width: 2.0, height: 0.18 }, { week: 3, width: 3.0, height: 0.06 } ] },
+    controls: function (w, R, row) {
+      var organic = Math.max(0, Math.round(40000 + 250 * w + 9000 * Math.sin(2 * Math.PI * (w - 48) / 52) + 4000 * R.gauss()));
+      var wom = Math.max(0, Math.round(9000 + 0.05 * organic + 1500 * R.gauss()));
+      var confidence = Math.round((100 + 5 * Math.sin(2 * Math.PI * w / 104) + 1.5 * R.gauss()) * 100) / 100;
+      var competitor = Math.round((50 + 14 * seasonalBump(w, 47, 6) + 5 * R.gauss()) * 10) / 10;
+      var isHol = ((w % 52) >= 46 || (w % 52) <= 1) ? 1 : 0;
+      var effect = 0.9 * organic + 2.0 * wom + 1500 * (confidence - 100) - 4000 * (competitor - 50);
+      return { columns: { organic_traffic: organic, word_of_mouth: wom, consumer_confidence: confidence, competitor_pressure: competitor, is_holiday: isHol }, effect: effect };
+    }
+  }, nWeeks);
 }
 
-/* ── E-Commerce Sample Data ── */
+/* ── E-Commerce / DTC ── */
 function generateEcommerceSampleData(nWeeks) {
-  if (!nWeeks) nWeeks = 156;
-  var data = [];
-  var base = new Date("2022-01-03");
-  var s = 101;
-  var random = function() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
-  var rng = function(lo, hi) { return lo + random() * (hi - lo); };
-
-  var chNames = ["paid_search_spend","paid_social_spend","display_ads_spend","influencer_spend","email_marketing_spend","affiliate_spend","retargeting_spend","seo_content_spend"];
-  var chBase =  [18000, 12000, 8000, 5000, 3000, 4000, 6000, 2500];
-  var chVol =   [4000,  3000,  2000, 1500, 800,  1000, 1500, 600];
-  var chROI =   [6.5,   4.2,   2.8,  3.5,  8.0,  5.0,  4.5,  3.0];
-  var chDecay = [0.12,  0.20,  0.30, 0.25, 0.10, 0.15, 0.18, 0.35];
-
-  var prevSpend = {};
-  chNames.forEach(function(c, i) { prevSpend[c] = chBase[i]; });
-  var prevAdstocked = {};
-  chNames.forEach(function(c) { prevAdstocked[c] = 0; });
-
-  for (var w = 0; w < nWeeks; w++) {
-    var d = new Date(base); d.setDate(d.getDate() + w * 7);
-    var dateStr = d.toISOString().slice(0, 10);
-    var month = d.getMonth() + 1;
-    /* E-commerce peaks: Black Friday/holiday, back-to-school, Prime Day */
-    var seasonMult = 1 + 0.25 * Math.sin(2 * Math.PI * (month - 3) / 12) + (month >= 11 ? 0.3 : 0);
-    var s52 = Math.sin(2 * Math.PI * w / 52);
-
-    var row = { date: dateStr };
-    var totalMediaEffect = 0;
-
-    chNames.forEach(function(c, i) {
-      var spend = Math.max(100, Math.round((0.6 * prevSpend[c] + 0.4 * (chBase[i] + rng(-chVol[i], chVol[i]))) * seasonMult));
-      row[c] = spend; prevSpend[c] = spend;
-      var adstocked = spend + chDecay[i] * prevAdstocked[c]; prevAdstocked[c] = adstocked;
-      var maxAd = chBase[i] * 3; var norm = Math.min(adstocked / maxAd, 3.0);
-      var sat = 1 - 1 / (1 + Math.pow(norm / 0.5, 2.0));
-      totalMediaEffect += chROI[i] * spend * sat;
-    });
-
-    var organic = Math.max(0, Math.round(8000 + 25 * w + 1200 * s52 + rng(-600, 600)));
-    var cart_abandon_rate = Math.round((68 + rng(-5, 5)) * 100) / 100;
-    var avg_order_value = Math.round((75 + 0.1 * w + rng(-8, 8)) * 100) / 100;
-    var sessions = Math.max(1000, Math.round(50000 + 200 * w + 8000 * s52 + rng(-3000, 3000)));
-    var isHoliday = ([11, 12, 1, 7].indexOf(month) >= 0 && random() < 0.4) ? 1 : 0;
-
-    var baseRev = 120000 + 300 * w + 25000 * s52 + 40000 * isHoliday;
-    var orgEffect = 1.5 * organic;
-    var convEffect = -500 * cart_abandon_rate + 800 * avg_order_value;
-    var noise = rng(-6000, 6000);
-    var revenue = Math.max(30000, Math.round(baseRev + totalMediaEffect + orgEffect + convEffect + noise));
-
-    row.organic_sessions = organic; row.cart_abandon_rate = cart_abandon_rate;
-    row.avg_order_value = avg_order_value; row.site_sessions = sessions;
-    row.is_holiday = isHoliday; row.revenue = revenue;
-    data.push(row);
-  }
-  return data;
+  return genIndustryData({
+    seed: 101,
+    kpiName: 'revenue', kpiFloor: 30000, noiseSd: 0.03,
+    channels: [
+      { name: 'paid_search_spend',    base: 42000, roas: 4.2, decay: 0.12, satHalf: 2.6, growth:  0.06, seasAmp: 0.30, peakWeek: 47, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.05 },
+      { name: 'paid_social_spend',    base: 38000, roas: 2.6, decay: 0.28, satHalf: 2.4, growth:  0.14, seasAmp: 0.34, peakWeek: 45, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.13 },
+      { name: 'display_ads_spend',    base: 16000, roas: 1.5, decay: 0.45, satHalf: 2.0, growth: -0.14, seasAmp: 0.22, peakWeek: 43, flight: 'pulsed',   launchWeek: 0,  endWeek: null, vol: 0.11 },
+      { name: 'influencer_spend',     base: 14000, roas: 2.3, decay: 0.30, satHalf: 1.8, growth:  0.38, seasAmp: 0.40, peakWeek: 49, flight: 'bursty',   launchWeek: 0,  endWeek: null, vol: 0.24 },
+      { name: 'email_marketing_spend',base:  7000, roas: 6.5, decay: 0.10, satHalf: 1.6, growth:  0.04, seasAmp: 0.36, peakWeek: 48, flight: 'bursty',   launchWeek: 0,  endWeek: null, vol: 0.07 },
+      { name: 'affiliate_spend',      base: 11000, roas: 3.8, decay: 0.15, satHalf: 2.2, growth:  0.08, seasAmp: 0.32, peakWeek: 48, flight: 'pulsed',   launchWeek: 0,  endWeek: null, vol: 0.12 },
+      { name: 'retargeting_spend',    base: 13000, roas: 5.2, decay: 0.10, satHalf: 1.5, growth:  0.45, seasAmp: 0.30, peakWeek: 46, flight: 'alwayson', launchWeek: 24, endWeek: null, vol: 0.08 },
+      { name: 'seo_content_spend',    base:  9000, roas: 3.2, decay: 0.65, satHalf: 2.8, growth:  0.22, seasAmp: 0.18, peakWeek: 34, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.06 }
+    ],
+    baseline: { share: 0.55, growth: 0.12, seasAmp: 0.22, peakWeek: 48,
+      holidays: [ { week: 47, width: 2.0, height: 0.30 }, { week: 50, width: 2.0, height: 0.22 }, { week: 33, width: 3.0, height: 0.08 } ] },
+    controls: function (w, R, row) {
+      var s52 = Math.sin(2 * Math.PI * (w - 48) / 52);
+      var organic = Math.max(0, Math.round(60000 + 400 * w + 12000 * s52 + 5000 * R.gauss()));
+      var cart = Math.round((68 - 4 * seasonalBump(w, 47, 4) + 1.5 * R.gauss()) * 100) / 100;
+      var aov = Math.round((78 + 0.12 * w + 6 * seasonalBump(w, 50, 3) + 4 * R.gauss()) * 100) / 100;
+      var sessions = Math.max(1000, Math.round(180000 + 600 * w + 30000 * s52 + 9000 * R.gauss()));
+      var isHol = ((w % 52) >= 46 || (w % 52) <= 1) ? 1 : 0;
+      var effect = 0.8 * organic - 1500 * (cart - 68) + 1200 * (aov - 80);
+      return { columns: { organic_sessions: organic, cart_abandon_rate: cart, avg_order_value: aov, site_sessions: sessions, is_holiday: isHol }, effect: effect };
+    }
+  }, nWeeks);
 }
 
-/* ── SaaS / B2B Sample Data ── */
+/* ── SaaS / B2B (growth spread per realism critique) ── */
 function generateSaasSampleData(nWeeks) {
-  if (!nWeeks) nWeeks = 156;
-  var data = [];
-  var base = new Date("2022-01-03");
-  var s = 77;
-  var random = function() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
-  var rng = function(lo, hi) { return lo + random() * (hi - lo); };
-
-  var chNames = ["google_ads_spend","linkedin_ads_spend","content_syndication_spend","webinar_spend","sdr_outbound_spend","partner_marketing_spend"];
-  var chBase =  [15000, 12000, 6000, 4000, 10000, 5000];
-  var chVol =   [3000,  2500,  1500, 1200, 2000,  1200];
-  var chROI =   [5.0,   4.5,   3.0,  6.0,  3.5,   4.0];
-  var chDecay = [0.15,  0.25,  0.40, 0.30, 0.10,  0.20];
-
-  var prevSpend = {};
-  chNames.forEach(function(c, i) { prevSpend[c] = chBase[i]; });
-  var prevAdstocked = {};
-  chNames.forEach(function(c) { prevAdstocked[c] = 0; });
-
-  for (var w = 0; w < nWeeks; w++) {
-    var d = new Date(base); d.setDate(d.getDate() + w * 7);
-    var dateStr = d.toISOString().slice(0, 10);
-    var month = d.getMonth() + 1;
-    /* B2B: Q4 budget flush, Q1 slow start */
-    var seasonMult = 1 + 0.1 * Math.sin(2 * Math.PI * (month - 1) / 12) + (month >= 10 ? 0.15 : 0);
-    var s52 = Math.sin(2 * Math.PI * w / 52);
-
-    var row = { date: dateStr };
-    var totalMediaEffect = 0;
-
-    chNames.forEach(function(c, i) {
-      var spend = Math.max(100, Math.round((0.65 * prevSpend[c] + 0.35 * (chBase[i] + rng(-chVol[i], chVol[i]))) * seasonMult));
-      row[c] = spend; prevSpend[c] = spend;
-      var adstocked = spend + chDecay[i] * prevAdstocked[c]; prevAdstocked[c] = adstocked;
-      var maxAd = chBase[i] * 3; var norm = Math.min(adstocked / maxAd, 3.0);
-      var sat = 1 - 1 / (1 + Math.pow(norm / 0.5, 2.0));
-      totalMediaEffect += chROI[i] * spend * sat;
-    });
-
-    var demo_requests = Math.max(0, Math.round(80 + 0.3 * w + 15 * s52 + rng(-10, 10)));
-    var free_trial_signups = Math.max(0, Math.round(200 + 0.8 * w + 30 * s52 + rng(-25, 25)));
-    var churn_rate = Math.round((5 + rng(-1, 1)) * 100) / 100;
-    var nps_score = Math.round((42 + rng(-5, 5)) * 10) / 10;
-    var isQEnd = ([3, 6, 9, 12].indexOf(month) >= 0) ? 1 : 0;
-
-    var baseRev = 80000 + 500 * w + 10000 * s52 + 20000 * isQEnd;
-    var leadEffect = 200 * demo_requests + 50 * free_trial_signups;
-    var retentionEffect = -3000 * churn_rate + 300 * nps_score;
-    var noise = rng(-5000, 5000);
-    var mrr = Math.max(20000, Math.round(baseRev + totalMediaEffect + leadEffect + retentionEffect + noise));
-
-    row.demo_requests = demo_requests; row.free_trial_signups = free_trial_signups;
-    row.churn_rate = churn_rate; row.nps_score = nps_score;
-    row.is_quarter_end = isQEnd; row.revenue = mrr;
-    data.push(row);
-  }
-  return data;
+  return genIndustryData({
+    seed: 77,
+    kpiName: 'revenue', kpiFloor: 20000, noiseSd: 0.03,
+    channels: [
+      { name: 'google_ads_spend',          base: 18000, roas: 4.2, decay: 0.10, satHalf: 1.8, growth:  0.05, seasAmp: 0.18, peakWeek: 3,  flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.05 },
+      { name: 'linkedin_ads_spend',        base: 22000, roas: 2.6, decay: 0.30, satHalf: 2.4, growth:  0.22, seasAmp: 0.28, peakWeek: 48, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.12 },
+      { name: 'content_syndication_spend', base: 12000, roas: 1.5, decay: 0.45, satHalf: 1.5, growth: -0.14, seasAmp: 0.22, peakWeek: 6,  flight: 'monthly',  launchWeek: 0,  endWeek: null, vol: 0.10 },
+      { name: 'webinar_spend',             base:  9000, roas: 2.2, decay: 0.50, satHalf: 2.0, growth:  0.12, seasAmp: 0.35, peakWeek: 41, flight: 'pulsed',   launchWeek: 0,  endWeek: null, vol: 0.15 },
+      { name: 'sdr_outbound_spend',        base: 26000, roas: 2.0, decay: 0.25, satHalf: 2.2, growth: -0.03, seasAmp: 0.20, peakWeek: 45, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.08 },
+      { name: 'partner_marketing_spend',   base:  8000, roas: 3.0, decay: 0.35, satHalf: 2.6, growth:  0.45, seasAmp: 0.30, peakWeek: 50, flight: 'bursty',   launchWeek: 28, endWeek: null, vol: 0.20 }
+    ],
+    baseline: { share: 0.60, growth: 0.18, seasAmp: 0.12, peakWeek: 48,
+      holidays: [ { week: 48, width: 3.0, height: 0.18 }, { week: 6, width: 4.0, height: 0.08 }, { week: 30, width: 4.0, height: -0.12 } ] },
+    controls: function (w, R, row) {
+      var s52 = Math.sin(2 * Math.PI * (w - 48) / 52);
+      var demo = Math.max(0, Math.round(90 + 0.5 * w + 18 * s52 + 10 * R.gauss()));
+      var trials = Math.max(0, Math.round(240 + 1.2 * w + 35 * s52 + 25 * R.gauss()));
+      var churn = Math.round((5 - 0.004 * w + 0.6 * R.gauss()) * 100) / 100;
+      var nps = Math.round((44 + 0.02 * w + 3 * R.gauss()) * 10) / 10;
+      var isQEnd = ([13, 26, 39, 51].indexOf(w % 52) >= 0 || [12, 25, 38, 50].indexOf(w % 52) >= 0) ? 1 : 0;
+      var effect = 220 * demo + 60 * trials - 4000 * (churn - 5) + 400 * (nps - 44);
+      return { columns: { demo_requests: demo, free_trial_signups: trials, churn_rate: churn, nps_score: nps, is_quarter_end: isQEnd }, effect: effect };
+    }
+  }, nWeeks);
 }
 
-/* ── Retail / CPG Sample Data ── */
+/* ── Retail / CPG ── */
 function generateRetailSampleData(nWeeks) {
-  if (!nWeeks) nWeeks = 156;
-  var data = [];
-  var base = new Date("2022-01-03");
-  var s = 55;
-  var random = function() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
-  var rng = function(lo, hi) { return lo + random() * (hi - lo); };
-
-  var chNames = ["tv_national_spend","tv_local_spend","radio_spend","print_flyer_spend","digital_coupons_spend","social_media_spend","in_store_promo_spend","ooh_billboard_spend"];
-  var chBase =  [35000, 15000, 8000, 6000, 4000, 7000, 10000, 5000];
-  var chVol =   [8000,  4000,  2000, 1500, 1000, 1800, 2500,  1200];
-  var chROI =   [3.0,   3.5,   2.0,  1.8,  4.5,  3.8,  5.0,   1.5];
-  var chDecay = [0.65,  0.55,  0.50, 0.40, 0.15, 0.20, 0.10,  0.45];
-
-  var prevSpend = {};
-  chNames.forEach(function(c, i) { prevSpend[c] = chBase[i]; });
-  var prevAdstocked = {};
-  chNames.forEach(function(c) { prevAdstocked[c] = 0; });
-
-  for (var w = 0; w < nWeeks; w++) {
-    var d = new Date(base); d.setDate(d.getDate() + w * 7);
-    var dateStr = d.toISOString().slice(0, 10);
-    var month = d.getMonth() + 1;
-    /* Retail: strong holidays, summer dip */
-    var seasonMult = 1 + 0.20 * Math.sin(2 * Math.PI * (month - 2) / 12) + (month === 12 ? 0.4 : month === 11 ? 0.25 : 0);
-    var s52 = Math.sin(2 * Math.PI * w / 52);
-
-    var row = { date: dateStr };
-    var totalMediaEffect = 0;
-
-    chNames.forEach(function(c, i) {
-      var spend = Math.max(100, Math.round((0.7 * prevSpend[c] + 0.3 * (chBase[i] + rng(-chVol[i], chVol[i]))) * seasonMult));
-      row[c] = spend; prevSpend[c] = spend;
-      var adstocked = spend + chDecay[i] * prevAdstocked[c]; prevAdstocked[c] = adstocked;
-      var maxAd = chBase[i] * 3; var norm = Math.min(adstocked / maxAd, 3.0);
-      var sat = 1 - 1 / (1 + Math.pow(norm / 0.5, 2.0));
-      totalMediaEffect += chROI[i] * spend * sat;
-    });
-
-    var foot_traffic = Math.max(1000, Math.round(25000 + 100 * w + 5000 * s52 + rng(-2000, 2000)));
-    var avg_basket_size = Math.round((45 + 0.05 * w + rng(-4, 4)) * 100) / 100;
-    var weather_index = Math.round((50 + 20 * Math.sin(2 * Math.PI * (month - 1) / 12) + rng(-5, 5)) * 10) / 10;
-    var competitor_promo = random() < 0.2 ? 1 : 0;
-    var isHoliday = ([11, 12, 1, 7, 5].indexOf(month) >= 0 && random() < 0.35) ? 1 : 0;
-
-    var baseRev = 350000 + 400 * w + 50000 * s52 + 80000 * isHoliday;
-    var storeEffect = 2.5 * foot_traffic + 3000 * avg_basket_size;
-    var extEffect = 500 * weather_index - 15000 * competitor_promo;
-    var noise = rng(-12000, 12000);
-    var sales = Math.max(100000, Math.round(baseRev + totalMediaEffect + storeEffect + extEffect + noise));
-
-    row.foot_traffic = foot_traffic; row.avg_basket_size = avg_basket_size;
-    row.weather_index = weather_index; row.competitor_promo = competitor_promo;
-    row.is_holiday = isHoliday; row.revenue = sales;
-    data.push(row);
-  }
-  return data;
+  return genIndustryData({
+    seed: 55,
+    kpiName: 'revenue', kpiFloor: 150000, noiseSd: 0.025,
+    channels: [
+      { name: 'tv_national_spend',    base: 95000, roas: 2.1, decay: 0.65, satHalf: 3.0, growth: -0.18, seasAmp: 0.45, peakWeek: 47, flight: 'flighted', launchWeek: 0,  endWeek: null, vol: 0.07 },
+      { name: 'tv_local_spend',       base: 42000, roas: 2.6, decay: 0.55, satHalf: 2.4, growth: -0.06, seasAmp: 0.38, peakWeek: 32, flight: 'flighted', launchWeek: 0,  endWeek: null, vol: 0.09 },
+      { name: 'radio_spend',          base: 18000, roas: 2.3, decay: 0.50, satHalf: 2.0, growth: -0.14, seasAmp: 0.30, peakWeek: 50, flight: 'pulsed',   launchWeek: 0,  endWeek: null, vol: 0.10 },
+      { name: 'print_flyer_spend',    base: 30000, roas: 1.9, decay: 0.40, satHalf: 1.8, growth: -0.24, seasAmp: 0.42, peakWeek: 48, flight: 'monthly',  launchWeek: 0,  endWeek: 132,  vol: 0.06 },
+      { name: 'digital_coupons_spend',base: 26000, roas: 4.2, decay: 0.12, satHalf: 2.6, growth:  0.28, seasAmp: 0.28, peakWeek: 3,  flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.06 },
+      { name: 'social_media_spend',   base: 34000, roas: 3.1, decay: 0.25, satHalf: 2.8, growth:  0.45, seasAmp: 0.32, peakWeek: 46, flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.13 },
+      { name: 'in_store_promo_spend', base: 48000, roas: 3.6, decay: 0.10, satHalf: 2.2, growth:  0.05, seasAmp: 0.50, peakWeek: 49, flight: 'seasonal', launchWeek: 0,  endWeek: null, vol: 0.08 },
+      { name: 'ooh_billboard_spend',  base: 22000, roas: 2.0, decay: 0.55, satHalf: 3.2, growth:  0.18, seasAmp: 0.25, peakWeek: 26, flight: 'pulsed',   launchWeek: 18, endWeek: null, vol: 0.07 }
+    ],
+    baseline: { share: 0.62, growth: 0.05, seasAmp: 0.20, peakWeek: 48,
+      holidays: [ { week: 47, width: 2.0, height: 0.25 }, { week: 50, width: 2.5, height: 0.35 }, { week: 32, width: 3.0, height: 0.10 }, { week: 3, width: 3.0, height: 0.06 } ] },
+    controls: function (w, R, row) {
+      var foot = Math.max(1000, Math.round(120000 + 300 * w + 25000 * Math.sin(2 * Math.PI * (w - 48) / 52) + 8000 * R.gauss()));
+      var basket = Math.round((46 + 0.05 * w + 4 * seasonalBump(w, 50, 3) + 3 * R.gauss()) * 100) / 100;
+      var weather = Math.round((50 + 22 * Math.sin(2 * Math.PI * (w - 26) / 52) + 4 * R.gauss()) * 10) / 10;
+      var compPromo = R.rand() < 0.18 ? 1 : 0;
+      var isHol = ((w % 52) >= 46 || (w % 52) <= 1) ? 1 : 0;
+      var effect = 1.2 * foot + 4000 * (basket - 46) + 400 * (weather - 50) - 40000 * compPromo;
+      return { columns: { foot_traffic: foot, avg_basket_size: basket, weather_index: weather, competitor_promo: compPromo, is_holiday: isHol }, effect: effect };
+    }
+  }, nWeeks);
 }
 
-/* ── Finance / Fintech Sample Data ── */
+/* ── Finance / Fintech (peakWeek spread per realism critique) ── */
 function generateFinanceSampleData(nWeeks) {
-  if (!nWeeks) nWeeks = 156;
-  var data = [];
-  var base = new Date("2022-01-03");
-  var s = 33;
-  var random = function() { s = (s * 16807) % 2147483647; return (s - 1) / 2147483646; };
-  var rng = function(lo, hi) { return lo + random() * (hi - lo); };
-
-  var chNames = ["search_sem_spend","social_paid_spend","display_programmatic_spend","tv_spot_spend","direct_mail_spend","podcast_sponsor_spend"];
-  var chBase =  [20000, 10000, 8000, 25000, 6000, 4000];
-  var chVol =   [5000,  2500,  2000, 6000,  1500, 1000];
-  var chROI =   [5.5,   3.5,   2.5,  2.0,   3.0,  4.0];
-  var chDecay = [0.10,  0.18,  0.28, 0.60,  0.35, 0.30];
-
-  var prevSpend = {};
-  chNames.forEach(function(c, i) { prevSpend[c] = chBase[i]; });
-  var prevAdstocked = {};
-  chNames.forEach(function(c) { prevAdstocked[c] = 0; });
-
-  for (var w = 0; w < nWeeks; w++) {
-    var d = new Date(base); d.setDate(d.getDate() + w * 7);
-    var dateStr = d.toISOString().slice(0, 10);
-    var month = d.getMonth() + 1;
-    var seasonMult = 1 + 0.08 * Math.sin(2 * Math.PI * (month - 1) / 12) + (month === 1 ? 0.15 : 0);
-    var s52 = Math.sin(2 * Math.PI * w / 52);
-
-    var row = { date: dateStr };
-    var totalMediaEffect = 0;
-
-    chNames.forEach(function(c, i) {
-      var spend = Math.max(100, Math.round((0.7 * prevSpend[c] + 0.3 * (chBase[i] + rng(-chVol[i], chVol[i]))) * seasonMult));
-      row[c] = spend; prevSpend[c] = spend;
-      var adstocked = spend + chDecay[i] * prevAdstocked[c]; prevAdstocked[c] = adstocked;
-      var maxAd = chBase[i] * 3; var norm = Math.min(adstocked / maxAd, 3.0);
-      var sat = 1 - 1 / (1 + Math.pow(norm / 0.5, 2.0));
-      totalMediaEffect += chROI[i] * spend * sat;
-    });
-
-    var app_downloads = Math.max(0, Math.round(3000 + 15 * w + 500 * s52 + rng(-300, 300)));
-    var interest_rate = Math.round((4.5 + 0.5 * Math.sin(2 * Math.PI * w / 104) + rng(-0.2, 0.2)) * 100) / 100;
-    var market_volatility = Math.round((20 + 8 * Math.sin(2 * Math.PI * w / 26) + rng(-3, 3)) * 10) / 10;
-    var brand_awareness = Math.round((55 + 0.08 * w + rng(-2, 2)) * 10) / 10;
-    var isTaxSeason = (month >= 1 && month <= 4) ? 1 : 0;
-
-    var baseRev = 200000 + 800 * w + 15000 * s52 + 30000 * isTaxSeason;
-    var appEffect = 25 * app_downloads;
-    var mktEffect = -2000 * interest_rate + 800 * brand_awareness - 500 * market_volatility;
-    var noise = rng(-8000, 8000);
-    var revenue = Math.max(50000, Math.round(baseRev + totalMediaEffect + appEffect + mktEffect + noise));
-
-    row.app_downloads = app_downloads; row.interest_rate = interest_rate;
-    row.market_volatility = market_volatility; row.brand_awareness = brand_awareness;
-    row.is_tax_season = isTaxSeason; row.revenue = revenue;
-    data.push(row);
-  }
-  return data;
+  return genIndustryData({
+    seed: 33,
+    kpiName: 'revenue', kpiFloor: 50000, noiseSd: 0.03,
+    channels: [
+      { name: 'search_sem_spend',           base: 22000, roas: 5.4, decay: 0.12, satHalf: 2.6, growth:  0.05, seasAmp: 0.30, peakWeek: 6,  flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.05 },
+      { name: 'social_paid_spend',          base: 13000, roas: 3.4, decay: 0.22, satHalf: 2.2, growth:  0.22, seasAmp: 0.26, peakWeek: 9,  flight: 'alwayson', launchWeek: 0,  endWeek: null, vol: 0.13 },
+      { name: 'display_programmatic_spend', base:  8500, roas: 2.6, decay: 0.30, satHalf: 1.9, growth:  0.30, seasAmp: 0.22, peakWeek: 12, flight: 'pulsed',   launchWeek: 0,  endWeek: null, vol: 0.14 },
+      { name: 'tv_spot_spend',              base: 24000, roas: 1.9, decay: 0.62, satHalf: 3.2, growth: -0.16, seasAmp: 0.50, peakWeek: 4,  flight: 'flighted', launchWeek: 0,  endWeek: null, vol: 0.10 },
+      { name: 'direct_mail_spend',          base:  5500, roas: 3.0, decay: 0.34, satHalf: 1.6, growth: -0.22, seasAmp: 0.32, peakWeek: 1,  flight: 'monthly',  launchWeek: 0,  endWeek: 132,  vol: 0.07 },
+      { name: 'podcast_sponsor_spend',      base:  4000, roas: 3.8, decay: 0.45, satHalf: 2.4, growth:  0.55, seasAmp: 0.20, peakWeek: 10, flight: 'bursty',   launchWeek: 26, endWeek: null, vol: 0.22 }
+    ],
+    baseline: { share: 0.60, growth: 0.10, seasAmp: 0.14, peakWeek: 8,
+      holidays: [ { week: 14, width: 3.0, height: 0.20 }, { week: 6, width: 4.0, height: 0.10 }, { week: 48, width: 3.0, height: 0.05 } ] },
+    controls: function (w, R, row) {
+      var s52 = Math.sin(2 * Math.PI * (w - 8) / 52);
+      var dl = Math.max(0, Math.round(30000 + 180 * w + 6000 * s52 + 2500 * R.gauss()));
+      var rate = Math.round((4.5 + 1.2 * Math.sin(2 * Math.PI * w / 104) + 0.15 * R.gauss()) * 100) / 100;
+      var vol = Math.round((20 + 8 * Math.sin(2 * Math.PI * (w - 13) / 26) + 2.5 * R.gauss()) * 10) / 10;
+      var brand = Math.round((55 + 0.09 * w + 1.5 * R.gauss()) * 10) / 10;
+      var isTax = ((w % 52) >= 1 && (w % 52) <= 15) ? 1 : 0;
+      var effect = 6 * dl - 9000 * (rate - 4.5) - 1500 * (vol - 20) + 2500 * (brand - 55);
+      return { columns: { app_downloads: dl, interest_rate: rate, market_volatility: vol, brand_awareness: brand, is_tax_season: isTax }, effect: effect };
+    }
+  }, nWeeks);
 }
+
 
 function geometricAdstock(x, theta) {
   var result = new Array(x.length).fill(0);
