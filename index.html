@@ -427,32 +427,41 @@ function geometricAdstock(x, theta) {
   return result;
 }
 
+/* Saturation reference: max over NON-NEGATIVE values (>=1e-9), and inputs are
+   clamped to >=0. A negative-max would otherwise flip signs / invert ordering, and
+   negative inputs would make log() return NaN. Media spend is non-negative by nature. */
+function satMaxRef(x) {
+  var m = 0;
+  for (var i = 0; i < x.length; i++) { var v = x[i] > 0 ? x[i] : 0; if (v > m) m = v; }
+  return m > 1e-9 ? m : 1;
+}
+
 function hillSaturation(x, alpha, gamma) {
-  var maxVal = Math.max.apply(null, x) || 1;
+  var maxVal = satMaxRef(x);
   return x.map(function(v) {
-    var norm = v / maxVal;
+    var norm = Math.max(0, v) / maxVal;
     if (norm <= 0) return 0;
     return 1 - 1 / (1 + Math.pow(norm / gamma, alpha));
   });
 }
 
 function negExponentialSaturation(x, alpha, beta) {
-  var maxVal = Math.max.apply(null, x) || 1;
+  var maxVal = satMaxRef(x);
   return x.map(function(v) {
-    var norm = v / maxVal;
+    var norm = Math.max(0, v) / maxVal;
     return alpha * (1 - Math.exp(-beta * norm));
   });
 }
 
 function logarithmicSaturation(x, alpha) {
-  var maxVal = Math.max.apply(null, x) || 1;
-  return x.map(function(v) { return alpha * Math.log(1 + v / maxVal); });
+  var maxVal = satMaxRef(x);
+  return x.map(function(v) { return alpha * Math.log(1 + Math.max(0, v) / maxVal); });
 }
 
 function powerSaturation(x, alpha) {
-  var maxVal = Math.max.apply(null, x) || 1;
+  var maxVal = satMaxRef(x);
   return x.map(function(v) {
-    var norm = v / maxVal;
+    var norm = Math.max(0, v) / maxVal;
     return norm > 0 ? Math.pow(norm, alpha) : 0;
   });
 }
@@ -569,7 +578,11 @@ function bayesianMAP(X, y, mediaCols, priorConfig) {
   var nonMediaSigma = cfg.nonMediaSigma || 10.0;
   var channelPriors = cfg.channelPriors || {};
 
-  /* ── Normalize y to mean=0, std=1 for proper prior conditioning ── */
+  /* ── Standardize y AND X to mean=0, std=1 so priors are on a meaningful,
+     consistent scale across columns (the old code standardized y but left X on
+     its raw [0,1] scale, making HalfNormal priors numerically negligible and the
+     fit un-centered in X). The prior precision 1/sigma^2 now acts in effect-size
+     units. The intercept is handled by centering. ── */
   var yMean = 0;
   for (var iy = 0; iy < n; iy++) yMean += y[iy];
   yMean /= n;
@@ -578,10 +591,15 @@ function bayesianMAP(X, y, mediaCols, priorConfig) {
   yVar /= n;
   var yStd = Math.sqrt(yVar);
   if (yStd < 1e-10) yStd = 1;
-  var yNorm = [];
-  for (var iy3 = 0; iy3 < n; iy3++) yNorm.push((y[iy3] - yMean) / yStd);
 
-  /* Prior precision (1/sigma^2) — now meaningful because y is standardized */
+  var xMean = new Array(p).fill(0), xStd = new Array(p).fill(1);
+  for (var jx = 0; jx < p; jx++) {
+    var mx = 0; for (var kx = 0; kx < n; kx++) mx += X[kx][jx]; mx /= n; xMean[jx] = mx;
+    var vx = 0; for (var kx2 = 0; kx2 < n; kx2++) vx += (X[kx2][jx] - mx) * (X[kx2][jx] - mx); vx /= n;
+    var sx = Math.sqrt(vx); xStd[jx] = sx < 1e-10 ? 1 : sx;
+  }
+
+  /* Prior precision (1/sigma^2) on the standardized coefficients */
   var priorPrec = [];
   for (var j = 0; j < p; j++) {
     if (j < nMedia) {
@@ -594,25 +612,31 @@ function bayesianMAP(X, y, mediaCols, priorConfig) {
     }
   }
 
-  /* ── Single MAP solve: beta = (X'X + diag(priorPrec))^-1 X'y_norm ── */
+  /* ── MAP solve on standardized design: betaZ = (Z'Z + diag(priorPrec))^-1 Z'z_y ── */
   var XtX = [];
   for (var i = 0; i < p; i++) { XtX[i] = []; for (var j3 = 0; j3 < p; j3++) XtX[i][j3] = 0; }
   for (var i2 = 0; i2 < p; i2++)
-    for (var j4 = 0; j4 < p; j4++)
-      for (var k = 0; k < n; k++) XtX[i2][j4] += X[k][i2] * X[k][j4];
+    for (var j4 = i2; j4 < p; j4++) {
+      var sxx = 0;
+      for (var k = 0; k < n; k++) sxx += ((X[k][i2] - xMean[i2]) / xStd[i2]) * ((X[k][j4] - xMean[j4]) / xStd[j4]);
+      XtX[i2][j4] = sxx; XtX[j4][i2] = sxx;
+    }
 
   /* Add prior precision to diagonal */
   for (var i3 = 0; i3 < p; i3++) XtX[i3][i3] += priorPrec[i3];
 
   var Xty = new Array(p).fill(0);
-  for (var i4 = 0; i4 < p; i4++)
-    for (var k2 = 0; k2 < n; k2++) Xty[i4] += X[k2][i4] * yNorm[k2];
+  for (var i4 = 0; i4 < p; i4++) {
+    var sxy = 0;
+    for (var k2 = 0; k2 < n; k2++) sxy += ((X[k2][i4] - xMean[i4]) / xStd[i4]) * ((y[k2] - yMean) / yStd);
+    Xty[i4] = sxy;
+  }
 
-  var betaNorm = solveSystem(XtX, Xty);
+  var betaZ = solveSystem(XtX, Xty);
 
-  /* ── Denormalize: beta_raw = beta_norm * yStd ── */
+  /* ── Denormalize standardized slope to raw slope: beta = betaZ * yStd / xStd ── */
   var beta = [];
-  for (var jd = 0; jd < p; jd++) beta.push(betaNorm[jd] * yStd);
+  for (var jd = 0; jd < p; jd++) beta.push(betaZ[jd] * yStd / xStd[jd]);
 
   /* Enforce positive media coefficients (HalfNormal prior) */
   for (var j5 = 0; j5 < nMedia; j5++) beta[j5] = Math.max(0, beta[j5]);
@@ -623,9 +647,10 @@ function bayesianMAP(X, y, mediaCols, priorConfig) {
 /* ── Bootstrap Resampling for Confidence Intervals ──
    Resamples the training data B times, re-fits the model each time,
    and returns percentile-based confidence intervals on betas. */
-function bootstrapCI(X, y, nMedia, method, priorConfig, nBoot, alpha) {
+function bootstrapCI(X, y, nMedia, method, priorConfig, nBoot, alpha, ridgeLambda) {
   if (!nBoot) nBoot = 200;
   if (!alpha) alpha = 0.05; /* 95% CI */
+  var lam = (typeof ridgeLambda === "number" && isFinite(ridgeLambda)) ? ridgeLambda : 1.0;
   var n = X.length, p = X[0].length;
   var betaSamples = [];
 
@@ -642,21 +667,11 @@ function bootstrapCI(X, y, nMedia, method, priorConfig, nBoot, alpha) {
     if (method === "bayesian") {
       betaB = bayesianMAP(Xb, yb, Array.from({length: nMedia}, function(_, i) { return "media_" + i; }), priorConfig);
     } else {
-      /* Try multiple lambdas, pick best */
-      var lambdas = [0.01, 0.1, 1.0, 10.0];
-      var bestBeta = null, bestSSE = Infinity;
-      lambdas.forEach(function(lam) {
-        var bTry = ridgeRegression(Xb, yb, lam);
-        for (var j = 0; j < nMedia; j++) bTry[j] = Math.max(0, bTry[j]);
-        var sse = 0;
-        for (var k = 0; k < n; k++) {
-          var pred = 0;
-          for (var j2 = 0; j2 < p; j2++) pred += Xb[k][j2] * bTry[j2];
-          sse += Math.pow(yb[k] - pred, 2);
-        }
-        if (sse < bestSSE) { bestSSE = sse; bestBeta = bTry; }
-      });
-      betaB = bestBeta;
+      /* Use the SAME regularization strength chosen for the fitted model.
+         (Re-selecting lambda by in-sample SSE on each resample always picks the
+         smallest lambda, making the CI effectively unregularized.) */
+      betaB = ridgeRegression(Xb, yb, lam);
+      for (var j = 0; j < nMedia; j++) betaB[j] = Math.max(0, betaB[j]);
     }
 
     betaSamples.push(betaB);
@@ -769,32 +784,52 @@ function solveSystem(A, b) {
 
 function ridgeRegression(X, y, alpha) {
   var n = X.length, p = X[0].length;
+  /* Center X columns and y so the intercept is unpenalized and handled exactly.
+     The ridge penalty then applies only to the slopes (standard ridge regression).
+     Callers recover the intercept as yMean - sum(beta * xMean), which is exact for
+     a centered fit. Fitting on UNcentered data without an intercept column (the old
+     behavior) biases the coefficients and makes the penalty scale-dependent. */
+  var xMean = new Array(p).fill(0);
+  for (var a = 0; a < p; a++) { for (var k0 = 0; k0 < n; k0++) xMean[a] += X[k0][a]; xMean[a] /= n; }
+  var yMean = 0; for (var k1 = 0; k1 < n; k1++) yMean += y[k1]; yMean /= n;
   var XtX = [];
   for (var i = 0; i < p; i++) { XtX[i] = []; for (var j = 0; j < p; j++) XtX[i][j] = 0; }
   for (var i2 = 0; i2 < p; i2++)
-    for (var j2 = 0; j2 < p; j2++)
-      for (var k = 0; k < n; k++) XtX[i2][j2] += X[k][i2] * X[k][j2];
+    for (var j2 = i2; j2 < p; j2++) {
+      var s = 0;
+      for (var k = 0; k < n; k++) s += (X[k][i2] - xMean[i2]) * (X[k][j2] - xMean[j2]);
+      XtX[i2][j2] = s; XtX[j2][i2] = s;
+    }
   for (var i3 = 0; i3 < p; i3++) XtX[i3][i3] += alpha * n;
   var Xty = new Array(p).fill(0);
-  for (var i4 = 0; i4 < p; i4++)
-    for (var k2 = 0; k2 < n; k2++) Xty[i4] += X[k2][i4] * y[k2];
+  for (var i4 = 0; i4 < p; i4++) {
+    var s2 = 0;
+    for (var k2 = 0; k2 < n; k2++) s2 += (X[k2][i4] - xMean[i4]) * (y[k2] - yMean);
+    Xty[i4] = s2;
+  }
   return solveSystem(XtX, Xty);
 }
 
 function computeMetrics(actual, predicted) {
   var n = actual.length;
   if (n === 0) return { r2: 0, mape: 0, rmse: 0, mae: 0, nrmse: 1 };
-  var meanA = 0; for (var i = 0; i < n; i++) meanA += actual[i]; meanA /= n;
-  var ssTot = 0, ssRes = 0, mapeSum = 0, maeSum = 0;
+  var meanA = 0, minA = Infinity, maxA = -Infinity;
+  for (var i = 0; i < n; i++) { meanA += actual[i]; if (actual[i] < minA) minA = actual[i]; if (actual[i] > maxA) maxA = actual[i]; }
+  meanA /= n;
+  var ssTot = 0, ssRes = 0, mapeSum = 0, mapeCount = 0, maeSum = 0;
   for (var i2 = 0; i2 < n; i2++) {
     ssTot += Math.pow(actual[i2] - meanA, 2);
     ssRes += Math.pow(actual[i2] - predicted[i2], 2);
-    if (Math.abs(actual[i2]) > 0) mapeSum += Math.abs((actual[i2] - predicted[i2]) / actual[i2]);
+    /* MAPE only over non-zero actuals, averaged over that count (not full n). */
+    if (Math.abs(actual[i2]) > 1e-9) { mapeSum += Math.abs((actual[i2] - predicted[i2]) / actual[i2]); mapeCount++; }
     maeSum += Math.abs(actual[i2] - predicted[i2]);
   }
   var rmse = Math.sqrt(ssRes / n);
-  var nrmse = meanA > 0 ? rmse / meanA : 1;
-  return { r2: ssTot > 0 ? 1 - ssRes / ssTot : 0, mape: mapeSum / n, rmse: rmse, mae: maeSum / n, nrmse: nrmse };
+  /* Normalize RMSE by the RANGE of the actuals (Robyn convention): robust to
+     zero/negative means, unlike the old mean-normalization that returned 1 whenever mean<=0. */
+  var rangeA = maxA - minA;
+  var nrmse = rangeA > 1e-9 ? rmse / rangeA : (Math.abs(meanA) > 1e-9 ? rmse / Math.abs(meanA) : 1);
+  return { r2: ssTot > 0 ? 1 - ssRes / ssTot : 0, mape: mapeSum / Math.max(1, mapeCount), rmse: rmse, mae: maeSum / n, nrmse: nrmse };
 }
 
 /* DECOMP.RSSD: Root Sum of Squared Distances between model-implied
@@ -865,6 +900,9 @@ var COLORS = ["#2563eb", "#f97316", "#16a34a", "#dc2626", "#7c3aed", "#0891b2", 
 function fmt(v, prefix) {
   var p = prefix !== undefined ? prefix : "$";
   if (typeof v !== "number") return v;
+  if (!isFinite(v)) return p + "0";
+  if (Math.abs(v) >= 1e12) return p + (v/1e12).toFixed(1) + "T";
+  if (Math.abs(v) >= 1e9) return p + (v/1e9).toFixed(1) + "B";
   if (Math.abs(v) >= 1e6) return p + (v/1e6).toFixed(1) + "M";
   if (Math.abs(v) >= 1e3) return p + (v/1e3).toFixed(0) + "K";
   return p + v.toFixed(0);
@@ -1694,6 +1732,7 @@ function MMMTool() {
         return newRow;
       });
 
+      var chTransform = {};
       mediaCols.forEach(function(col) {
         var raw = filteredData.map(function(r) { return r[col] || 0; });
         var adstocked = raw;
@@ -1738,6 +1777,11 @@ function MMMTool() {
           var alpha = sp.alpha || sp.alphaMin || 0.5;
           saturated = powerSaturation(adstocked, alpha);
         }
+        /* Remember the adstock reference max (what saturation normalized by) and the
+           saturation params, so the displayed response curve can be reconstructed to
+           EXACTLY match the fitted feature pipeline. */
+        var adMaxC = 0; for (var im = 0; im < adstocked.length; im++) { if (adstocked[im] > adMaxC) adMaxC = adstocked[im]; }
+        chTransform[col] = { adMax: adMaxC > 1e-9 ? adMaxC : 1, sp: sp };
         saturated.forEach(function(v, i) { transformedData[i][col] = v; });
       });
 
@@ -1753,7 +1797,9 @@ function MMMTool() {
       var X = transformedData.map(function(row) {
         return allFeatures.map(function(col) {
           var s2 = normStats[col];
-          return Math.max(0, Math.min(1, (row[col] - s2.min) / s2.range));
+          var vN = (row[col] - s2.min) / s2.range;
+          if (!isFinite(vN)) vN = 0;
+          return Math.max(0, Math.min(1, vN));
         });
       });
 
@@ -1778,19 +1824,31 @@ function MMMTool() {
         var preds = Xte.map(function(row) { var ss = intcpt; for (var ii3 = 0; ii3 < row.length; ii3++) ss += row[ii3] * betaMAP[ii3]; return ss; });
         bestTestR2 = computeMetrics(yte, preds).r2;
       } else {
-        /* Ridge regression (Robyn-style) — try multiple lambda values */
+        /* Ridge regression (Robyn-style). Select lambda on a VALIDATION slice carved
+           from the end of the training data — never on the held-out test set (that
+           would be leakage and would make the reported test R2 optimistic). Then
+           refit the final coefficients on the full training set with the chosen lambda. */
         var lambdas = [0.001, 0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0, 250.0, 500.0];
+        var valStart = Math.max(5, Math.floor(Xtr.length * 0.8));
+        if (valStart >= Xtr.length) valStart = Xtr.length - 1;
+        var Xfit = Xtr.slice(0, valStart), yfit = ytr.slice(0, valStart);
+        var Xval = Xtr.slice(valStart), yval = ytr.slice(valStart);
+        var useVal = Xval.length >= 4;
+        var bestValR2 = -Infinity;
+        bestLambda = 1.0;
         lambdas.forEach(function(lam) {
-          var bTry = ridgeRegression(Xtr, ytr, lam);
+          if (!useVal) return;
+          var bTry = ridgeRegression(Xfit, yfit, lam);
           bTry = bTry.map(function(b, i) { return i < mediaCols.length ? Math.max(0, b) : b; });
-          var yM = 0; for (var ii = 0; ii < ytr.length; ii++) yM += ytr[ii]; yM /= ytr.length;
-          var xM = allFeatures.map(function(_, j) { var ss = 0; for (var kk = 0; kk < Xtr.length; kk++) ss += Xtr[kk][j]; return ss / Xtr.length; });
+          var yM = 0; for (var ii = 0; ii < yfit.length; ii++) yM += yfit[ii]; yM /= yfit.length;
+          var xM = allFeatures.map(function(_, j) { var ss = 0; for (var kk = 0; kk < Xfit.length; kk++) ss += Xfit[kk][j]; return ss / Xfit.length; });
           var intSum = 0; for (var ii2 = 0; ii2 < bTry.length; ii2++) intSum += bTry[ii2] * xM[ii2];
           var intcpt = yM - intSum;
-          var preds = Xte.map(function(row) { var ss = intcpt; for (var ii3 = 0; ii3 < row.length; ii3++) ss += row[ii3] * bTry[ii3]; return ss; });
-          var m = computeMetrics(yte, preds);
-          if (m.r2 > bestTestR2) { bestTestR2 = m.r2; bestBeta = bTry; bestLambda = lam; }
+          var preds = Xval.map(function(row) { var ss = intcpt; for (var ii3 = 0; ii3 < row.length; ii3++) ss += row[ii3] * bTry[ii3]; return ss; });
+          var m = computeMetrics(yval, preds);
+          if (m.r2 > bestValR2) { bestValR2 = m.r2; bestLambda = lam; }
         });
+        bestBeta = ridgeRegression(Xtr, ytr, bestLambda).map(function(b, i) { return i < mediaCols.length ? Math.max(0, b) : b; });
       }
       var beta = bestBeta || ridgeRegression(Xtr, ytr, regAlpha);
       beta = beta.map(function(b, i) { return i < mediaCols.length ? Math.max(0, b) : b; });
@@ -1844,28 +1902,22 @@ function MMMTool() {
         var points = [];
         for (var ss = 0; ss <= 50; ss++) {
           var spend = (ss / 50) * maxSpend;
-          var spendArr = [spend];
-          var adstockedArr = spendArr;
-          var ap = combo.adstock && combo.adstock[col] ? combo.adstock[col] : null;
+          /* Reconstruct the curve to EXACTLY match the fitted feature pipeline:
+             steady-state adstock for a sustained weekly spend, normalized by the same
+             reference the saturation used in training (max of the adstocked series),
+             then rescaled through the model's min-max normalization and multiplied by beta.
+             (The old version's adstock multiplier algebraically cancelled out and it
+             skipped the normStats rescale, so curves did not reflect the actual model.) */
+          var ct = chTransform[col] || { adMax: 1, sp: {} };
+          var adVal = spend;
+          var apC = combo.adstock && combo.adstock[col] ? combo.adstock[col] : null;
           if (adstockType === "geometric") {
-            var th = ap ? (ap.theta != null ? ap.theta : ap) : (adstockParams[col] ? adstockParams[col].thetaMin || 0.3 : 0.3);
-            adstockedArr = [spend * (1 + th)];
-          } else if (adstockType === "weibull_cdf") {
-            var sh = ap ? ap.shape || 1 : (adstockParams[col] ? adstockParams[col].shapeMin || 1 : 1);
-            adstockedArr = [spend * (1 + weibullCDF(1, sh, 1))];
-          } else if (adstockType === "weibull_pdf") {
-            var sh = ap ? ap.shape || 1 : (adstockParams[col] ? adstockParams[col].shapeMin || 1 : 1);
-            adstockedArr = [spend * (1 + sh * 0.1)];
-          } else if (adstockType === "binomial") {
-            var bA = ap ? ap.alpha || 0.2 : 0.2;
-            var bL = ap ? ap.maxLag || 8 : 8;
-            /* Steady state multiplier for binomial: sum of weights is 1, but carryover accumulates */
-            adstockedArr = [spend * (1 + bA * bL * 0.15)];
+            var thC = apC ? (apC.theta != null ? apC.theta : apC) : (adstockParams[col] ? adstockParams[col].thetaMin || 0.3 : 0.3);
+            adVal = spend / Math.max(0.01, 1 - thC);
           }
-          var maxAd = maxSpend * (adstockedArr[0] / (spend || 1) || 1);
-          var norm = maxAd > 0 ? adstockedArr[0] / maxAd : 0;
+          var norm = ct.adMax > 0 ? adVal / ct.adMax : 0;
+          var sp2 = ct.sp || {};
           var satVal = 0;
-          var sp2 = combo.sat && combo.sat[col] ? combo.sat[col] : (satParams[col] || {});
           if (satFunction === "hill") {
             var a = sp2.alpha || sp2.alphaMin || 2.0;
             var g = sp2.gamma || sp2.gammaMin || 0.5;
@@ -1881,7 +1933,10 @@ function MMMTool() {
             var a = sp2.alpha || sp2.alphaMin || 0.5;
             satVal = norm > 0 ? Math.pow(norm, a) : 0;
           }
-          var response = satVal * beta[idx];
+          var ns2 = normStats[col] || { min: 0, range: 1 };
+          var rawN = (satVal - ns2.min) / (ns2.range || 1);
+          var normN = Math.max(0, Math.min(1, rawN));
+          var response = normN * beta[idx];
           points.push({ spend: Math.round(spend), response: Math.round(response) });
         }
         responseCurves[col] = points;
@@ -1952,6 +2007,15 @@ function MMMTool() {
       var splitIdx = Math.floor(n * (1 - testPct / 100));
       if (splitIdx < 10) throw new Error("Not enough training data");
 
+      /* Guard against an unmodelable (zero-variance / constant) target. */
+      var yChk = filteredData.map(function(r) { return r[targetCol] || 0; });
+      var yChkMean = 0; for (var yi = 0; yi < yChk.length; yi++) yChkMean += yChk[yi]; yChkMean /= yChk.length;
+      var yChkVar = 0; for (var yi2 = 0; yi2 < yChk.length; yi2++) yChkVar += (yChk[yi2] - yChkMean) * (yChk[yi2] - yChkMean);
+      yChkVar /= yChk.length;
+      if (Math.sqrt(yChkVar) < 1e-9 * (Math.abs(yChkMean) + 1)) {
+        throw new Error("Target '" + targetCol + "' has (near) zero variance — it is constant and cannot be modeled. Pick a target column that varies over time.");
+      }
+
       var combos = generateGrid();
       var totalCombos = combos.length;
       var results = [];
@@ -2014,16 +2078,21 @@ function MMMTool() {
         });
 
         /* Min-max normalize */
+        /* Normalize using the TRAIN-slice min/max (matching runSingleModel) so the
+           bootstrap/CV design matrix is on the SAME scale as the model's coefficients;
+           otherwise the confidence intervals would not be comparable to the displayed betas. */
         var nStatsG = {};
         allFeatGlobal.forEach(function(col) {
-          var vals = transformedData.map(function(r) { return r[col]; });
+          var vals = transformedData.slice(0, splitIdx).map(function(r) { return r[col]; });
           var mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals);
           nStatsG[col] = { min: mn, range: (mx - mn) || 1 };
         });
         var X = transformedData.map(function(row) {
           return allFeatGlobal.map(function(col) {
             var s = nStatsG[col];
-            return Math.max(0, Math.min(1, (row[col] - s.min) / s.range));
+            var vN2 = (row[col] - s.min) / s.range;
+            if (!isFinite(vN2)) vN2 = 0;
+            return Math.max(0, Math.min(1, vN2));
           });
         });
         return X;
@@ -2057,9 +2126,10 @@ function MMMTool() {
             if (runBootstrap && X_global) {
               setTrainPhase("Running bootstrap CI (" + nBootstrap + " resamples)...");
               try {
+                var bootLambda = (results[0] && typeof results[0].ridgeLambda === "number") ? results[0].ridgeLambda : 1.0;
                 var ciResult = bootstrapCI(
                   X_global, y_global, mediaCols.length,
-                  snapMethod, snapPriors, nBootstrap, 0.05
+                  snapMethod, snapPriors, nBootstrap, 0.05, bootLambda
                 );
                 setBootstrapResults(ciResult);
               } catch(e) { setBootstrapResults(null); }
@@ -2198,18 +2268,12 @@ function MMMTool() {
     if (adstockType === "geometric") {
       var th = p.ap ? (p.ap.theta != null ? p.ap.theta : 0.3) : 0.3;
       adVal = spend / Math.max(0.01, 1 - th);
-    } else if (adstockType === "weibull_cdf") {
-      var sh = p.ap ? p.ap.shape || 1 : 1;
-      var sc = p.ap ? p.ap.scale || 0.05 : 0.05;
-      adVal = spend * (1 + sh * sc * 5);
-    } else if (adstockType === "weibull_pdf") {
-      var sh2 = p.ap ? p.ap.shape || 1 : 1;
-      var sc2 = p.ap ? p.ap.scale || 0.05 : 0.05;
-      adVal = spend * (1 + sh2 * sc2 * 3);
-    } else if (adstockType === "binomial") {
-      var bA = p.ap ? p.ap.alpha || 0.2 : 0.2;
-      var bL = p.ap ? p.ap.maxLag || 8 : 8;
-      adVal = spend * (1 + bA * bL * 0.15);
+    } else {
+      /* weibull_cdf / weibull_pdf / binomial adstock weights are normalized to
+         sum to 1 in training, so for a sustained weekly spend the steady-state
+         adstocked value equals the spend itself (multiplier = 1.0). The old ad-hoc
+         multipliers (1.15x–6x) inflated the saturation input and biased the optimizer. */
+      adVal = spend;
     }
 
     /* Step 2: Saturation — normalize by training reference max, then apply curve */
@@ -2235,21 +2299,18 @@ function MMMTool() {
     }
 
     /* Step 3: Scale to model feature space.
-       Training used hard [0,1] clamp but for the optimizer we use a soft ceiling:
-       - Below training min → smoothly approaches 0 (not hard clamp)
-       - Above training max → logarithmic diminishing returns (not flat zero)
-       This preserves meaningful MROI gradients at all spend levels. */
+       Training used a hard [0,1] clamp; for the optimizer we extend it SMOOTHLY so
+       marginal ROI is continuous (no artificial jump that pins spend at the boundary):
+       - In-distribution (0..1): use directly (slope 1).
+       - Above training max: 1 + ln(raw) — value AND slope are continuous at raw=1
+         (d/draw ln(raw) = 1/raw = 1 at raw=1), giving smooth diminishing returns.
+         The old 1 + 0.1*ln(raw) dropped the slope 10x at the boundary. */
     var raw = (satVal - p.ns.min) / (p.ns.range || 1);
     var normalized;
-    if (raw <= 0) {
-      /* Below training min: allow small positive contribution that grows from 0 */
-      normalized = Math.max(0, raw * 0.1 + 0.01 * satVal);
-    } else if (raw <= 1) {
-      /* In-distribution: use directly */
-      normalized = raw;
+    if (raw <= 1) {
+      normalized = Math.max(0, raw);
     } else {
-      /* Above training max: soft ceiling with log diminishing returns */
-      normalized = 1.0 + 0.1 * Math.log(raw);
+      normalized = 1 + Math.log(raw);
     }
     normalized = Math.max(0, normalized);
 
@@ -2373,7 +2434,12 @@ function MMMTool() {
       var convergeFactor = avgM > 0 ? Math.min(1, gap / avgM) : 0.5;
       var maxShiftUp = effMax[best.col] - alloc[best.col];
       var maxShiftDown = alloc[worst.col] - effMin[worst.col];
-      var shift = Math.max(10, Math.min(baseShift * convergeFactor, maxShiftUp * 0.3, maxShiftDown * 0.3));
+      /* Cap the transfer by the actual room on BOTH sides so we never overshoot a
+         per-channel bound. The desired step is floored only for progress, then clamped. */
+      var room = Math.min(maxShiftUp, maxShiftDown);
+      if (room <= 1e-6) break;
+      var desired = Math.max(1, baseShift * convergeFactor);
+      var shift = Math.min(desired, room);
       alloc[worst.col] -= shift;
       alloc[best.col] += shift;
 
@@ -2412,22 +2478,29 @@ function MMMTool() {
     mediaCols.forEach(function(col) { var raw = filteredData.map(function(r) { return r[col] || 0; }); var mx = Math.max.apply(null, raw); hi += mx * 3; });
     hi = Math.max(hi, 100000);
 
-    var bestAlloc = {};
+    /* Seed with the maximum-budget allocation so we always return a usable plan,
+       even if the target is infeasible. Flag feasibility for the UI. */
+    var maxAlloc = optimizeBudget(hi, bounds);
+    var maxResp = simulateBudget(maxAlloc);
+    var feasible = maxResp.total >= revTarget;
+    var bestAlloc = maxAlloc;
     var bestBudget = hi;
-    for (var s = 0; s < 40; s++) {
-      var mid = (lo + hi) / 2;
-      var alloc = optimizeBudget(mid, bounds);
-      var resp = simulateBudget(alloc);
-      if (resp.total >= revTarget) {
-        bestAlloc = alloc;
-        bestBudget = mid;
-        hi = mid;
-      } else {
-        lo = mid;
+    if (feasible) {
+      for (var s = 0; s < 40; s++) {
+        var mid = (lo + hi) / 2;
+        var alloc = optimizeBudget(mid, bounds);
+        var resp = simulateBudget(alloc);
+        if (resp.total >= revTarget) {
+          bestAlloc = alloc;
+          bestBudget = mid;
+          hi = mid;
+        } else {
+          lo = mid;
+        }
+        if (hi - lo < 100) break;
       }
-      if (hi - lo < 100) break;
     }
-    return { budget: Math.round(bestBudget), alloc: bestAlloc };
+    return { budget: Math.round(bestBudget), alloc: bestAlloc, feasible: feasible };
   }
 
   /* ── Mode 3: Scenario curve at multiple budget levels ── */
