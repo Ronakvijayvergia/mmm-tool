@@ -1,0 +1,1020 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MMM Diminishing Returns Curve Tool</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.5.1" integrity="sha384-jb8JQMbMoBUzgWatfe6COACi2ljcDdZQ2OxczGA3bGNeWe+6DChMTBJemed7ZnvJ" crossorigin="anonymous"></script>
+<style>
+:root {
+  --bg: #f8fafc; --card: #ffffff; --border: #e2e8f0; --text: #1e293b;
+  --muted: #64748b; --accent: #2563eb; --accent-light: #dbeafe;
+  --green: #059669; --green-light: #d1fae5; --red: #dc2626; --red-light: #fee2e2;
+  --orange: #d97706; --purple: #7c3aed; --pink: #db2777;
+  --radius: 10px; --shadow: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.06);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,.1);
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+
+/* ── Layout ───────────────────────────── */
+.app { display: flex; min-height: 100vh; }
+.sidebar { width: 340px; background: var(--card); border-right: 1px solid var(--border); padding: 24px; overflow-y: auto; flex-shrink: 0; }
+.main { flex: 1; padding: 24px 32px; overflow-y: auto; }
+
+/* ── Sidebar ──────────────────────────── */
+.sidebar h1 { font-size: 18px; font-weight: 700; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+.sidebar .subtitle { font-size: 12px; color: var(--muted); margin-bottom: 20px; }
+.section-title { font-size: 13px; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin: 20px 0 10px; }
+
+.channel-tab-bar { display: flex; gap: 4px; flex-wrap: wrap; margin-bottom: 16px; }
+.ch-tab { padding: 6px 14px; border-radius: 20px; font-size: 12px; font-weight: 600; border: 2px solid var(--border); background: var(--card); cursor: pointer; transition: all .15s; }
+.ch-tab:hover { border-color: var(--accent); }
+.ch-tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
+.control-group { margin-bottom: 14px; }
+.control-group label { display: block; font-size: 12px; font-weight: 600; margin-bottom: 4px; color: var(--text); }
+.control-group .hint { font-size: 11px; color: var(--muted); margin-bottom: 4px; }
+.control-group select, .control-group input[type=number], .control-group input[type=range] {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px;
+  font-size: 13px; background: #fff; color: var(--text); outline: none;
+}
+.control-group select:focus, .control-group input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-light); }
+.control-group input[type=range] { padding: 0; margin-top: 2px; }
+.range-row { display: flex; justify-content: space-between; align-items: center; }
+.range-val { font-size: 12px; font-weight: 600; color: var(--accent); min-width: 40px; text-align: right; }
+
+.param-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+
+.divider { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+/* ── Tabs ─────────────────────────────── */
+.tab-bar { display: flex; gap: 2px; background: #f1f5f9; border-radius: 8px; padding: 3px; margin-bottom: 20px; }
+.tab { flex: 1; padding: 10px 8px; text-align: center; font-size: 13px; font-weight: 600; border-radius: 6px; cursor: pointer; transition: all .15s; color: var(--muted); }
+.tab:hover { color: var(--text); }
+.tab.active { background: var(--card); color: var(--accent); box-shadow: var(--shadow); }
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+/* ── Cards ────────────────────────────── */
+.kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 14px; margin-bottom: 24px; }
+.kpi { background: var(--card); border-radius: var(--radius); padding: 16px 18px; border: 1px solid var(--border); }
+.kpi .kpi-label { font-size: 11px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+.kpi .kpi-value { font-size: 24px; font-weight: 700; margin-top: 4px; }
+.kpi .kpi-sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.kpi.green .kpi-value { color: var(--green); }
+.kpi.blue .kpi-value { color: var(--accent); }
+.kpi.orange .kpi-value { color: var(--orange); }
+.kpi.purple .kpi-value { color: var(--purple); }
+
+.chart-card { background: var(--card); border-radius: var(--radius); padding: 20px; border: 1px solid var(--border); margin-bottom: 20px; }
+.chart-card h3 { font-size: 15px; font-weight: 700; margin-bottom: 14px; }
+.chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+
+/* ── Table ────────────────────────────── */
+.table-wrap { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th { background: #f8fafc; padding: 10px 12px; text-align: left; font-weight: 600; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; border-bottom: 2px solid var(--border); cursor: pointer; white-space: nowrap; }
+th:hover { color: var(--text); }
+td { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+tr:hover td { background: #f8fafc; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ── Budget Optimizer ─────────────────── */
+.budget-input-row { display: flex; gap: 12px; align-items: end; margin-bottom: 20px; flex-wrap: wrap; }
+.budget-input-row .control-group { margin-bottom: 0; }
+.btn { padding: 9px 20px; border-radius: 6px; font-size: 13px; font-weight: 600; border: none; cursor: pointer; transition: all .15s; }
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { background: #1d4ed8; }
+.btn-outline { background: #fff; color: var(--accent); border: 1px solid var(--accent); }
+.btn-outline:hover { background: var(--accent-light); }
+
+.opt-comparison { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 20px; }
+.alloc-bar { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.alloc-bar .ch-label { width: 60px; font-size: 12px; font-weight: 600; }
+.alloc-bar .bar-track { flex: 1; height: 24px; background: #f1f5f9; border-radius: 4px; overflow: hidden; position: relative; }
+.alloc-bar .bar-fill { height: 100%; border-radius: 4px; transition: width .4s ease; display: flex; align-items: center; padding-left: 8px; font-size: 11px; font-weight: 600; color: #fff; }
+.alloc-bar .bar-val { width: 70px; font-size: 12px; text-align: right; font-variant-numeric: tabular-nums; }
+
+.lift-badge { display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 13px; font-weight: 700; }
+.lift-badge.positive { background: var(--green-light); color: var(--green); }
+.lift-badge.negative { background: var(--red-light); color: var(--red); }
+
+/* ── Export ────────────────────────────── */
+.export-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+
+/* ── Tooltip ──────────────────────────── */
+.info-tip { display: inline-block; width: 16px; height: 16px; line-height: 16px; text-align: center; border-radius: 50%; background: #e2e8f0; color: var(--muted); font-size: 10px; font-weight: 700; cursor: help; position: relative; }
+.info-tip:hover::after { content: attr(data-tip); position: absolute; bottom: 120%; left: 50%; transform: translateX(-50%); background: var(--text); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 11px; font-weight: 400; white-space: nowrap; z-index: 100; max-width: 260px; white-space: normal; }
+
+@media (max-width: 900px) {
+  .app { flex-direction: column; }
+  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); }
+  .chart-row { grid-template-columns: 1fr; }
+  .opt-comparison { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ═══════════ SIDEBAR ═══════════ -->
+<aside class="sidebar" id="sidebar">
+  <h1>📈 MMM Curve Tool</h1>
+  <p class="subtitle">Configure channels, view curves, optimize budget</p>
+
+  <div class="section-title">Channels</div>
+  <div class="channel-tab-bar" id="channelTabs"></div>
+
+  <div id="channelControls"></div>
+
+  <hr class="divider">
+  <div class="section-title">Global Settings</div>
+  <div class="control-group">
+    <label>Spend Range Multiplier</label>
+    <div class="range-row">
+      <input type="range" id="spendMult" min="0.5" max="3" step="0.1" value="1.5" oninput="onGlobalChange()">
+      <span class="range-val" id="spendMultVal">1.5×</span>
+    </div>
+  </div>
+  <div class="control-group">
+    <label>Curve Resolution (points)</label>
+    <div class="range-row">
+      <input type="range" id="curveRes" min="50" max="500" step="50" value="200" oninput="onGlobalChange()">
+      <span class="range-val" id="curveResVal">200</span>
+    </div>
+  </div>
+</aside>
+
+<!-- ═══════════ MAIN CONTENT ═══════════ -->
+<div class="main">
+
+  <div class="tab-bar">
+    <div class="tab active" data-tab="curves" onclick="switchTab('curves')">📉 Response Curves</div>
+    <div class="tab" data-tab="marginal" onclick="switchTab('marginal')">📊 Marginal ROI</div>
+    <div class="tab" data-tab="optimize" onclick="switchTab('optimize')">🎯 Optimize Budget</div>
+    <div class="tab" data-tab="table" onclick="switchTab('table')">📋 Data Table</div>
+    <div class="tab" data-tab="export" onclick="switchTab('export')">💾 Export</div>
+  </div>
+
+  <!-- ── Response Curves ────────────── -->
+  <div class="tab-content active" id="tab-curves">
+    <div class="kpi-row" id="curveKPIs"></div>
+    <div class="chart-card">
+      <h3>Diminishing Returns Curves — All Channels</h3>
+      <canvas id="chartOverlay" height="90"></canvas>
+    </div>
+    <div class="chart-row">
+      <div class="chart-card">
+        <h3 id="singleChartTitle">TV — Response Curve</h3>
+        <canvas id="chartSingle" height="100"></canvas>
+      </div>
+      <div class="chart-card">
+        <h3>Normalized Comparison (0–100%)</h3>
+        <canvas id="chartNormalized" height="100"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Marginal ROI ───────────────── -->
+  <div class="tab-content" id="tab-marginal">
+    <div class="chart-card">
+      <h3>Marginal Response (dResponse / dSpend) — All Channels</h3>
+      <canvas id="chartMarginalAll" height="100"></canvas>
+    </div>
+    <div class="chart-card">
+      <h3 id="margSingleTitle">TV — Marginal Response</h3>
+      <canvas id="chartMarginalSingle" height="90"></canvas>
+    </div>
+  </div>
+
+  <!-- ── Optimize ───────────────────── -->
+  <div class="tab-content" id="tab-optimize">
+    <div class="budget-input-row">
+      <div class="control-group">
+        <label>Total Budget ($)</label>
+        <input type="number" id="totalBudget" value="100000" step="5000" style="width:180px">
+      </div>
+      <div class="control-group">
+        <label>Algorithm</label>
+        <select id="optAlgo" style="width:200px">
+          <option value="gradient">Gradient-Based (fast)</option>
+          <option value="grid">Grid Search (thorough)</option>
+        </select>
+      </div>
+      <button class="btn btn-primary" onclick="runOptimization()">🎯 Optimize</button>
+    </div>
+    <div id="optResults" style="display:none">
+      <div class="kpi-row" id="optKPIs"></div>
+      <div class="opt-comparison">
+        <div class="chart-card">
+          <h3>Current Allocation</h3>
+          <div id="barsCurrentAlloc"></div>
+        </div>
+        <div class="chart-card">
+          <h3>Optimized Allocation</h3>
+          <div id="barsOptAlloc"></div>
+        </div>
+      </div>
+      <div class="chart-row" style="margin-top:20px">
+        <div class="chart-card">
+          <h3>Budget Split Comparison</h3>
+          <canvas id="chartBudgetCompare" height="100"></canvas>
+        </div>
+        <div class="chart-card">
+          <h3>Response by Channel</h3>
+          <canvas id="chartResponseCompare" height="100"></canvas>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Data Table ─────────────────── -->
+  <div class="tab-content" id="tab-table">
+    <div class="control-group" style="max-width:200px;margin-bottom:16px">
+      <label>Channel</label>
+      <select id="tableChannel" onchange="renderTable()"></select>
+    </div>
+    <div class="chart-card">
+      <div class="table-wrap">
+        <table id="dataTable">
+          <thead><tr><th>Spend</th><th>Response</th><th>Marginal</th><th>ROI</th><th>mROI</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Export ─────────────────────── -->
+  <div class="tab-content" id="tab-export">
+    <div class="chart-card">
+      <h3>Export Your Results</h3>
+      <p style="color:var(--muted);font-size:13px;margin-bottom:16px">Download curve data, optimization results, or channel configurations.</p>
+      <div class="export-btns">
+        <button class="btn btn-primary" onclick="exportCurvesCSV()">📥 Curves CSV</button>
+        <button class="btn btn-outline" onclick="exportOptCSV()">📥 Optimization CSV</button>
+        <button class="btn btn-outline" onclick="exportConfigJSON()">📥 Config JSON</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════
+// DATA MODEL
+// ═══════════════════════════════════════════════════
+
+const CHANNEL_COLORS = {
+  TV: '#2563eb', Social: '#7c3aed', Search: '#059669', Email: '#d97706', Display: '#dc2626'
+};
+
+const EQUATION_TYPES = ['Linear','Logarithmic','Power','Exponential','Hill','Quadratic'];
+
+const DEFAULT_PARAMS = {
+  Linear:      { beta: 0.5 },
+  Logarithmic: { beta: 500, gamma: 0.001 },
+  Power:       { beta: 50,  gamma: 0.6 },
+  Exponential: { beta: 5000, gamma: 0.0001 },
+  Hill:        { beta: 5000, gamma: 2.0, delta: 500 },
+  Quadratic:   { beta: 1.0, gamma: 0.0005 },
+};
+
+const PARAM_HINTS = {
+  beta:  'Scale / maximum response',
+  gamma: 'Shape / curvature / rate',
+  delta: 'Half-max spend (EC50, Hill only)',
+};
+
+// Sample channel data (average weekly spend for demo)
+const SAMPLE_SPENDS = { TV: 50000, Social: 15000, Search: 25000, Email: 5000, Display: 10000 };
+
+let channels = {};  // { name: { equation, params, adstockType, adstockDecay, weibullShape, weibullScale, lag } }
+let activeChannel = 'TV';
+let curveCache = {};   // { name: { spend[], response[], marginal[] } }
+let optResult = null;
+
+// ═══════════════════════════════════════════════════
+// MATH ENGINE
+// ═══════════════════════════════════════════════════
+
+function responseFunc(type, x, p) {
+  switch(type) {
+    case 'Linear':      return p.beta * x;
+    case 'Logarithmic': return p.beta * Math.log(p.gamma * x + 1);
+    case 'Power':       return p.beta * Math.pow(Math.max(x, 0), p.gamma);
+    case 'Exponential': return p.beta * (1 - Math.exp(-p.gamma * x));
+    case 'Hill': {
+      const xg = Math.pow(Math.max(x, 0), p.gamma);
+      const dg = Math.pow(Math.max(p.delta, 1e-10), p.gamma);
+      return p.beta * xg / (xg + dg);
+    }
+    case 'Quadratic':   return p.beta * x - p.gamma * x * x;
+    default: return 0;
+  }
+}
+
+function marginalFunc(type, x, p) {
+  const eps = Math.max(x, 1e-10);
+  switch(type) {
+    case 'Linear':      return p.beta;
+    case 'Logarithmic': return p.beta * p.gamma / (p.gamma * x + 1);
+    case 'Power':       return p.beta * p.gamma * Math.pow(eps, p.gamma - 1);
+    case 'Exponential': return p.beta * p.gamma * Math.exp(-p.gamma * x);
+    case 'Hill': {
+      const xg = Math.pow(eps, p.gamma);
+      const dg = Math.pow(Math.max(p.delta,1e-10), p.gamma);
+      return p.beta * p.gamma * Math.pow(eps, p.gamma-1) * dg / Math.pow(xg + dg, 2);
+    }
+    case 'Quadratic':   return p.beta - 2 * p.gamma * x;
+    default: return 0;
+  }
+}
+
+function geometricAdstockSteadyState(spend, decay) {
+  // Steady-state for constant spend with geometric decay: spend / (1 - decay)
+  if (decay >= 1) return spend * 100;
+  return spend / (1 - decay);
+}
+
+function steadyState(spendLevel, ch) {
+  let transformed = spendLevel;
+  // Lag doesn't change steady-state level, just delays it
+  if (ch.adstockType === 'geometric') {
+    transformed = geometricAdstockSteadyState(spendLevel, ch.adstockDecay);
+  } else if (ch.adstockType === 'weibull') {
+    // Approximate: simulate 104 periods
+    const n = 104, maxLag = 13;
+    const s = new Array(n).fill(spendLevel);
+    const shape = ch.weibullShape, scale = ch.weibullScale;
+    const weights = [];
+    let wsum = 0;
+    for (let l = 0; l < maxLag; l++) {
+      let w = (shape/scale) * Math.pow(l/scale, shape-1) * Math.exp(-Math.pow(l/scale, shape));
+      if (l === 0 && w < 1e-10) w = 1e-10;
+      weights.push(w); wsum += w;
+    }
+    weights.forEach((_,i) => weights[i] /= wsum);
+    const ads = new Array(n).fill(0);
+    for (let t = 0; t < n; t++) {
+      for (let l = 0; l < Math.min(maxLag, t+1); l++) {
+        ads[t] += weights[l] * s[t - l];
+      }
+    }
+    transformed = ads[n - 1];
+  }
+  return transformed;
+}
+
+// ═══════════════════════════════════════════════════
+// CURVE GENERATION
+// ═══════════════════════════════════════════════════
+
+function generateCurves() {
+  const mult = parseFloat(document.getElementById('spendMult').value);
+  const res = parseInt(document.getElementById('curveRes').value);
+  curveCache = {};
+
+  for (const [name, ch] of Object.entries(channels)) {
+    const maxSpend = (SAMPLE_SPENDS[name] || 20000) * mult;
+    const spend = [], response = [], marginal = [];
+    for (let i = 0; i < res; i++) {
+      const s = (maxSpend / (res - 1)) * i;
+      const t = steadyState(s, ch);
+      spend.push(s);
+      response.push(responseFunc(ch.equation, t, ch.params));
+      // Marginal adjusted for adstock multiplier
+      let m = marginalFunc(ch.equation, t, ch.params);
+      if (ch.adstockType === 'geometric' && ch.adstockDecay < 1) {
+        m *= 1 / (1 - ch.adstockDecay);
+      }
+      marginal.push(m);
+    }
+    curveCache[name] = { spend, response, marginal };
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// OPTIMIZATION (Gradient-based via iterative improvement)
+// ═══════════════════════════════════════════════════
+
+function channelResponseAtSpend(name, spend) {
+  const ch = channels[name];
+  const t = steadyState(spend, ch);
+  return responseFunc(ch.equation, t, ch.params);
+}
+
+function channelMarginalAtSpend(name, spend) {
+  const ch = channels[name];
+  const t = steadyState(spend, ch);
+  let m = marginalFunc(ch.equation, t, ch.params);
+  if (ch.adstockType === 'geometric' && ch.adstockDecay < 1) m *= 1/(1-ch.adstockDecay);
+  return m;
+}
+
+function optimizeGradient(budget, maxIter = 2000) {
+  const names = Object.keys(channels);
+  const n = names.length;
+  // Start with equal split
+  let alloc = names.map(() => budget / n);
+  const step = budget * 0.001;
+
+  for (let iter = 0; iter < maxIter; iter++) {
+    // Compute marginals
+    const margs = alloc.map((s, i) => channelMarginalAtSpend(names[i], s));
+    // Find highest and lowest marginal
+    let maxIdx = 0, minIdx = 0;
+    for (let i = 1; i < n; i++) {
+      if (margs[i] > margs[maxIdx]) maxIdx = i;
+      if (margs[i] < margs[minIdx]) minIdx = i;
+    }
+    if (maxIdx === minIdx || Math.abs(margs[maxIdx] - margs[minIdx]) < 1e-8) break;
+    // Transfer from lowest marginal to highest
+    const transfer = Math.min(step, alloc[minIdx]);
+    alloc[minIdx] -= transfer;
+    alloc[maxIdx] += transfer;
+    // Clamp
+    alloc = alloc.map(v => Math.max(v, 0));
+  }
+
+  // Normalize to budget
+  const total = alloc.reduce((a,b) => a+b, 0);
+  if (total > 0) alloc = alloc.map(v => v * budget / total);
+
+  const result = {};
+  names.forEach((name, i) => {
+    result[name] = {
+      spend: alloc[i],
+      response: channelResponseAtSpend(name, alloc[i]),
+      marginal: channelMarginalAtSpend(name, alloc[i]),
+    };
+  });
+  return result;
+}
+
+function optimizeGrid(budget, nPoints = 15) {
+  const names = Object.keys(channels);
+  const n = names.length;
+  let bestResp = -Infinity, bestAlloc = null;
+  const nSamples = Math.min(Math.pow(nPoints, Math.min(n, 3)), 20000);
+
+  for (let s = 0; s < nSamples; s++) {
+    // Random Dirichlet-like: random splits
+    const rands = names.map(() => Math.random());
+    const rsum = rands.reduce((a,b) => a+b, 0);
+    const alloc = rands.map(r => (r / rsum) * budget);
+    let totalResp = 0;
+    alloc.forEach((sp, i) => totalResp += channelResponseAtSpend(names[i], sp));
+    if (totalResp > bestResp) { bestResp = totalResp; bestAlloc = alloc; }
+  }
+
+  // Polish with gradient
+  const step = budget * 0.002;
+  for (let iter = 0; iter < 500; iter++) {
+    const margs = bestAlloc.map((s, i) => channelMarginalAtSpend(names[i], s));
+    let maxI = 0, minI = 0;
+    for (let i = 1; i < n; i++) {
+      if (margs[i] > margs[maxI]) maxI = i;
+      if (margs[i] < margs[minI]) minI = i;
+    }
+    if (maxI === minI) break;
+    const transfer = Math.min(step, bestAlloc[minI]);
+    bestAlloc[minI] -= transfer;
+    bestAlloc[maxI] += transfer;
+  }
+
+  const result = {};
+  names.forEach((name, i) => {
+    result[name] = {
+      spend: bestAlloc[i],
+      response: channelResponseAtSpend(name, bestAlloc[i]),
+      marginal: channelMarginalAtSpend(name, bestAlloc[i]),
+    };
+  });
+  return result;
+}
+
+// ═══════════════════════════════════════════════════
+// UI INIT
+// ═══════════════════════════════════════════════════
+
+function initChannels() {
+  const chNames = ['TV','Social','Search','Email','Display'];
+  const defaults = [
+    { eq:'Hill', params:{beta:8000, gamma:1.8, delta:40000}, decay:0.7 },
+    { eq:'Logarithmic', params:{beta:600, gamma:0.0005}, decay:0.3 },
+    { eq:'Power', params:{beta:80, gamma:0.55}, decay:0.1 },
+    { eq:'Exponential', params:{beta:2000, gamma:0.0008}, decay:0.2 },
+    { eq:'Logarithmic', params:{beta:400, gamma:0.0003}, decay:0.5 },
+  ];
+
+  chNames.forEach((name, i) => {
+    channels[name] = {
+      equation: defaults[i].eq,
+      params: { ...defaults[i].params },
+      adstockType: 'geometric',
+      adstockDecay: defaults[i].decay,
+      weibullShape: 1.0,
+      weibullScale: 2.0,
+      lag: 0,
+    };
+  });
+}
+
+function renderChannelTabs() {
+  const bar = document.getElementById('channelTabs');
+  bar.innerHTML = '';
+  Object.keys(channels).forEach(name => {
+    const el = document.createElement('div');
+    el.className = 'ch-tab' + (name === activeChannel ? ' active' : '');
+    el.style.borderColor = name === activeChannel ? CHANNEL_COLORS[name] : '';
+    el.style.background = name === activeChannel ? CHANNEL_COLORS[name] : '';
+    el.style.color = name === activeChannel ? '#fff' : '';
+    el.textContent = name;
+    el.onclick = () => { activeChannel = name; renderChannelTabs(); renderChannelControls(); updateAll(); };
+    bar.appendChild(el);
+  });
+}
+
+function renderChannelControls() {
+  const ch = channels[activeChannel];
+  const container = document.getElementById('channelControls');
+
+  // Build param fields based on equation type
+  const eqParams = Object.keys(DEFAULT_PARAMS[ch.equation]);
+  let paramHTML = eqParams.map(p => `
+    <div class="control-group">
+      <label>${p} <span class="info-tip" data-tip="${PARAM_HINTS[p] || ''}">?</span></label>
+      <input type="number" id="param_${p}" value="${ch.params[p] || DEFAULT_PARAMS[ch.equation][p]}"
+             step="${p==='gamma' && ch.params[p] < 0.01 ? 0.00001 : (ch.params[p] || 1) * 0.05}"
+             onchange="onParamChange()">
+    </div>
+  `).join('');
+
+  container.innerHTML = `
+    <div class="section-title">${activeChannel} Settings</div>
+    <div class="control-group">
+      <label>Response Function <span class="info-tip" data-tip="Mathematical shape of the diminishing returns curve">?</span></label>
+      <select id="eqType" onchange="onEquationChange()">
+        ${EQUATION_TYPES.map(t => `<option value="${t}" ${t===ch.equation?'selected':''}>${t}</option>`).join('')}
+      </select>
+    </div>
+    <div class="param-grid">${paramHTML}</div>
+
+    <hr class="divider">
+    <div class="control-group">
+      <label>Adstock Type <span class="info-tip" data-tip="Carryover effect: how spend in one period affects future periods">?</span></label>
+      <select id="adstockType" onchange="onAdstockChange()">
+        <option value="none" ${ch.adstockType==='none'?'selected':''}>None</option>
+        <option value="geometric" ${ch.adstockType==='geometric'?'selected':''}>Geometric</option>
+        <option value="weibull" ${ch.adstockType==='weibull'?'selected':''}>Weibull</option>
+      </select>
+    </div>
+    ${ch.adstockType === 'geometric' ? `
+      <div class="control-group">
+        <label>Decay Rate (λ)</label>
+        <div class="hint">Higher = longer carryover. TV: 0.6–0.8, Digital: 0.1–0.4</div>
+        <div class="range-row">
+          <input type="range" id="adstockDecay" min="0" max="0.95" step="0.05" value="${ch.adstockDecay}" oninput="onAdstockParamChange()">
+          <span class="range-val" id="decayVal">${ch.adstockDecay}</span>
+        </div>
+      </div>
+    ` : ''}
+    ${ch.adstockType === 'weibull' ? `
+      <div class="param-grid">
+        <div class="control-group">
+          <label>Shape (k)</label>
+          <input type="number" id="wbShape" value="${ch.weibullShape}" step="0.1" min="0.1" onchange="onAdstockParamChange()">
+        </div>
+        <div class="control-group">
+          <label>Scale (λ)</label>
+          <input type="number" id="wbScale" value="${ch.weibullScale}" step="0.5" min="0.5" onchange="onAdstockParamChange()">
+        </div>
+      </div>
+    ` : ''}
+    <div class="control-group">
+      <label>Lag (periods) <span class="info-tip" data-tip="Delay before effect kicks in">?</span></label>
+      <div class="range-row">
+        <input type="range" id="lagPeriods" min="0" max="12" step="1" value="${ch.lag}" oninput="onLagChange()">
+        <span class="range-val" id="lagVal">${ch.lag}</span>
+      </div>
+    </div>
+  `;
+}
+
+// ═══════════════════════════════════════════════════
+// EVENT HANDLERS
+// ═══════════════════════════════════════════════════
+
+function onEquationChange() {
+  const eq = document.getElementById('eqType').value;
+  channels[activeChannel].equation = eq;
+  channels[activeChannel].params = { ...DEFAULT_PARAMS[eq] };
+  renderChannelControls();
+  updateAll();
+}
+
+function onParamChange() {
+  const ch = channels[activeChannel];
+  const eqParams = Object.keys(DEFAULT_PARAMS[ch.equation]);
+  eqParams.forEach(p => {
+    const el = document.getElementById('param_' + p);
+    if (el) ch.params[p] = parseFloat(el.value) || 0;
+  });
+  updateAll();
+}
+
+function onAdstockChange() {
+  channels[activeChannel].adstockType = document.getElementById('adstockType').value;
+  renderChannelControls();
+  updateAll();
+}
+
+function onAdstockParamChange() {
+  const ch = channels[activeChannel];
+  if (ch.adstockType === 'geometric') {
+    ch.adstockDecay = parseFloat(document.getElementById('adstockDecay').value);
+    document.getElementById('decayVal').textContent = ch.adstockDecay;
+  } else if (ch.adstockType === 'weibull') {
+    ch.weibullShape = parseFloat(document.getElementById('wbShape').value) || 1;
+    ch.weibullScale = parseFloat(document.getElementById('wbScale').value) || 2;
+  }
+  updateAll();
+}
+
+function onLagChange() {
+  channels[activeChannel].lag = parseInt(document.getElementById('lagPeriods').value);
+  document.getElementById('lagVal').textContent = channels[activeChannel].lag;
+  updateAll();
+}
+
+function onGlobalChange() {
+  document.getElementById('spendMultVal').textContent = document.getElementById('spendMult').value + '×';
+  document.getElementById('curveResVal').textContent = document.getElementById('curveRes').value;
+  updateAll();
+}
+
+function switchTab(tabId) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.querySelector(`.tab[data-tab="${tabId}"]`).classList.add('active');
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+  document.getElementById('tab-' + tabId).classList.add('active');
+  updateAll();
+}
+
+// ═══════════════════════════════════════════════════
+// CHART INSTANCES
+// ═══════════════════════════════════════════════════
+
+let chartOverlay, chartSingle, chartNormalized, chartMarginalAll, chartMarginalSingle;
+let chartBudgetCompare, chartResponseCompare;
+
+function fmt$(v) {
+  if (Math.abs(v) >= 1e6) return '$' + (v/1e6).toFixed(1) + 'M';
+  if (Math.abs(v) >= 1e3) return '$' + (v/1e3).toFixed(0) + 'K';
+  return '$' + v.toFixed(0);
+}
+
+function fmtNum(v) {
+  if (Math.abs(v) >= 1e6) return (v/1e6).toFixed(1) + 'M';
+  if (Math.abs(v) >= 1e3) return (v/1e3).toFixed(1) + 'K';
+  return v.toFixed(v < 10 ? 4 : 0);
+}
+
+function decimateData(arr, maxPoints) {
+  if (arr.length <= maxPoints) return arr;
+  const step = Math.ceil(arr.length / maxPoints);
+  return arr.filter((_, i) => i % step === 0 || i === arr.length - 1);
+}
+
+function makeDatasets(maxPts = 120) {
+  const datasets = {};
+  Object.keys(curveCache).forEach(name => {
+    const c = curveCache[name];
+    const step = Math.max(1, Math.floor(c.spend.length / maxPts));
+    datasets[name] = {
+      spend: c.spend.filter((_,i) => i%step===0),
+      response: c.response.filter((_,i) => i%step===0),
+      marginal: c.marginal.filter((_,i) => i%step===0),
+    };
+  });
+  return datasets;
+}
+
+function initCharts() {
+  const tickCb = (v) => fmt$(v);
+  const numCb = (v) => fmtNum(v);
+  const baseOpts = {
+    responsive: true,
+    animation: { duration: 300 },
+    plugins: {
+      tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.parsed.y)}` } },
+      legend: { position: 'top', labels: { usePointStyle: true, pointStyle: 'circle', padding: 14, font: { size: 12 } } },
+    },
+    scales: {
+      x: { title: { display: true, text: 'Spend ($)', font: { weight: 'bold' } }, ticks: { callback: tickCb, maxTicksLimit: 8 } },
+      y: { title: { display: true, text: 'Response', font: { weight: 'bold' } }, ticks: { callback: numCb } },
+    },
+  };
+
+  chartOverlay = new Chart(document.getElementById('chartOverlay'), {
+    type: 'line', data: { datasets: [] },
+    options: { ...baseOpts, plugins: { ...baseOpts.plugins }, scales: { ...baseOpts.scales } },
+  });
+
+  chartSingle = new Chart(document.getElementById('chartSingle'), {
+    type: 'line', data: { datasets: [] },
+    options: { ...baseOpts, plugins: { ...baseOpts.plugins, legend: { display: false } } },
+  });
+
+  chartNormalized = new Chart(document.getElementById('chartNormalized'), {
+    type: 'line', data: { datasets: [] },
+    options: {
+      ...baseOpts,
+      scales: {
+        x: { ...baseOpts.scales.x },
+        y: { title: { display: true, text: 'Normalized (0–100%)', font: { weight: 'bold' } }, ticks: { callback: v => v + '%' }, min: 0, max: 100 },
+      },
+    },
+  });
+
+  chartMarginalAll = new Chart(document.getElementById('chartMarginalAll'), {
+    type: 'line', data: { datasets: [] },
+    options: {
+      ...baseOpts,
+      scales: {
+        x: { ...baseOpts.scales.x },
+        y: { title: { display: true, text: 'Marginal (dR/dS)', font: { weight: 'bold' } }, ticks: { callback: numCb } },
+      },
+    },
+  });
+
+  chartMarginalSingle = new Chart(document.getElementById('chartMarginalSingle'), {
+    type: 'line', data: { datasets: [] },
+    options: {
+      ...baseOpts,
+      plugins: { ...baseOpts.plugins, legend: { display: false } },
+      scales: {
+        x: { ...baseOpts.scales.x },
+        y: { title: { display: true, text: 'Marginal (dR/dS)', font: { weight: 'bold' } } },
+      },
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════
+// UPDATE ALL
+// ═══════════════════════════════════════════════════
+
+function updateAll() {
+  generateCurves();
+  updateKPIs();
+  updateCharts();
+  updateTableDropdown();
+  renderTable();
+}
+
+function updateKPIs() {
+  const container = document.getElementById('curveKPIs');
+  const names = Object.keys(channels);
+  const classes = ['blue','purple','green','orange',''];
+  container.innerHTML = names.map((name, i) => {
+    const c = curveCache[name];
+    const maxR = Math.max(...c.response);
+    return `<div class="kpi ${classes[i%5]}"><div class="kpi-label">${name}</div><div class="kpi-value">${fmtNum(maxR)}</div><div class="kpi-sub">Max response at ${fmt$(c.spend[c.response.indexOf(maxR)])}</div></div>`;
+  }).join('');
+}
+
+function updateCharts() {
+  const ds = makeDatasets(100);
+  const names = Object.keys(ds);
+
+  // Overlay
+  chartOverlay.data.datasets = names.map(name => ({
+    label: name,
+    data: ds[name].spend.map((s, i) => ({ x: s, y: ds[name].response[i] })),
+    borderColor: CHANNEL_COLORS[name] || '#666',
+    backgroundColor: (CHANNEL_COLORS[name] || '#666') + '18',
+    fill: false, borderWidth: 2.5, pointRadius: 0, tension: 0.3,
+  }));
+  chartOverlay.update('none');
+
+  // Single channel
+  const ac = activeChannel;
+  if (ds[ac]) {
+    document.getElementById('singleChartTitle').textContent = `${ac} — Response Curve`;
+    chartSingle.data.datasets = [{
+      label: ac,
+      data: ds[ac].spend.map((s, i) => ({ x: s, y: ds[ac].response[i] })),
+      borderColor: CHANNEL_COLORS[ac] || '#2563eb',
+      backgroundColor: (CHANNEL_COLORS[ac] || '#2563eb') + '15',
+      fill: true, borderWidth: 2.5, pointRadius: 0, tension: 0.3,
+    }];
+    // Add current spend marker
+    const avgSpend = SAMPLE_SPENDS[ac] || 0;
+    if (avgSpend > 0) {
+      const t = steadyState(avgSpend, channels[ac]);
+      const r = responseFunc(channels[ac].equation, t, channels[ac].params);
+      chartSingle.data.datasets.push({
+        label: 'Current Avg Spend',
+        data: [{ x: avgSpend, y: r }],
+        borderColor: '#6b7280', backgroundColor: '#6b7280',
+        pointRadius: 7, pointStyle: 'circle', showLine: false,
+      });
+    }
+    chartSingle.update('none');
+  }
+
+  // Normalized
+  chartNormalized.data.datasets = names.map(name => {
+    const maxR = Math.max(...ds[name].response.map(Math.abs), 1e-10);
+    return {
+      label: name,
+      data: ds[name].spend.map((s, i) => ({ x: s, y: (ds[name].response[i] / maxR) * 100 })),
+      borderColor: CHANNEL_COLORS[name] || '#666',
+      fill: false, borderWidth: 2, pointRadius: 0, tension: 0.3,
+    };
+  });
+  chartNormalized.update('none');
+
+  // Marginal all
+  chartMarginalAll.data.datasets = names.map(name => ({
+    label: name,
+    data: ds[name].spend.map((s, i) => ({ x: s, y: ds[name].marginal[i] })),
+    borderColor: CHANNEL_COLORS[name] || '#666',
+    fill: false, borderWidth: 2, pointRadius: 0, tension: 0.3,
+  }));
+  chartMarginalAll.update('none');
+
+  // Marginal single
+  if (ds[ac]) {
+    document.getElementById('margSingleTitle').textContent = `${ac} — Marginal Response`;
+    chartMarginalSingle.data.datasets = [{
+      label: ac + ' Marginal',
+      data: ds[ac].spend.map((s, i) => ({ x: s, y: ds[ac].marginal[i] })),
+      borderColor: CHANNEL_COLORS[ac] || '#2563eb',
+      backgroundColor: (CHANNEL_COLORS[ac] || '#2563eb') + '15',
+      fill: true, borderWidth: 2.5, pointRadius: 0, tension: 0.3,
+    }];
+    chartMarginalSingle.update('none');
+  }
+}
+
+// ═══════════════════════════════════════════════════
+// TABLE
+// ═══════════════════════════════════════════════════
+
+function updateTableDropdown() {
+  const sel = document.getElementById('tableChannel');
+  const current = sel.value;
+  sel.innerHTML = Object.keys(channels).map(n => `<option value="${n}" ${n===current?'selected':''}>${n}</option>`).join('');
+}
+
+function renderTable() {
+  const name = document.getElementById('tableChannel').value || Object.keys(channels)[0];
+  const c = curveCache[name];
+  if (!c) return;
+
+  const step = Math.max(1, Math.floor(c.spend.length / 25));
+  const tbody = document.querySelector('#dataTable tbody');
+  let html = '';
+  for (let i = 0; i < c.spend.length; i += step) {
+    const s = c.spend[i], r = c.response[i], m = c.marginal[i];
+    const roi = s > 0 ? (r / s) : 0;
+    html += `<tr><td class="num">${fmt$(s)}</td><td class="num">${fmtNum(r)}</td><td class="num">${m.toFixed(6)}</td><td class="num">${roi.toFixed(4)}</td><td class="num">${m.toFixed(4)}</td></tr>`;
+  }
+  tbody.innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════
+// OPTIMIZATION UI
+// ═══════════════════════════════════════════════════
+
+function runOptimization() {
+  const budget = parseFloat(document.getElementById('totalBudget').value) || 100000;
+  const algo = document.getElementById('optAlgo').value;
+
+  optResult = algo === 'gradient' ? optimizeGradient(budget) : optimizeGrid(budget);
+
+  // Show results
+  document.getElementById('optResults').style.display = 'block';
+
+  const names = Object.keys(optResult);
+  const currentTotal = names.reduce((s, n) => s + channelResponseAtSpend(n, SAMPLE_SPENDS[n] || 0), 0);
+  const optTotal = names.reduce((s, n) => s + optResult[n].response, 0);
+  const lift = currentTotal > 0 ? ((optTotal - currentTotal) / currentTotal * 100) : 0;
+
+  // KPIs
+  document.getElementById('optKPIs').innerHTML = `
+    <div class="kpi blue"><div class="kpi-label">Total Budget</div><div class="kpi-value">${fmt$(budget)}</div></div>
+    <div class="kpi"><div class="kpi-label">Current Response</div><div class="kpi-value">${fmtNum(currentTotal)}</div></div>
+    <div class="kpi green"><div class="kpi-label">Optimized Response</div><div class="kpi-value">${fmtNum(optTotal)}</div></div>
+    <div class="kpi ${lift>=0?'green':''}"><div class="kpi-label">Potential Lift</div><div class="kpi-value"><span class="lift-badge ${lift>=0?'positive':'negative'}">${lift>=0?'+':''}${lift.toFixed(1)}%</span></div></div>
+  `;
+
+  // Allocation bars
+  const maxAlloc = Math.max(...names.map(n => Math.max(SAMPLE_SPENDS[n]||0, optResult[n].spend)), 1);
+  document.getElementById('barsCurrentAlloc').innerHTML = names.map(n => {
+    const s = SAMPLE_SPENDS[n]||0;
+    const pct = (s/maxAlloc)*100;
+    return `<div class="alloc-bar"><span class="ch-label">${n}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${CHANNEL_COLORS[n]}">${pct>15?fmt$(s):''}</div></div><span class="bar-val">${fmt$(s)}</span></div>`;
+  }).join('');
+
+  document.getElementById('barsOptAlloc').innerHTML = names.map(n => {
+    const s = optResult[n].spend;
+    const pct = (s/maxAlloc)*100;
+    return `<div class="alloc-bar"><span class="ch-label">${n}</span><div class="bar-track"><div class="bar-fill" style="width:${pct}%;background:${CHANNEL_COLORS[n]}">${pct>15?fmt$(s):''}</div></div><span class="bar-val">${fmt$(s)}</span></div>`;
+  }).join('');
+
+  // Budget compare chart
+  if (chartBudgetCompare) chartBudgetCompare.destroy();
+  chartBudgetCompare = new Chart(document.getElementById('chartBudgetCompare'), {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [
+        { label: 'Current', data: names.map(n => SAMPLE_SPENDS[n]||0), backgroundColor: '#94a3b8' },
+        { label: 'Optimized', data: names.map(n => optResult[n].spend), backgroundColor: names.map(n => CHANNEL_COLORS[n]) },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmt$(ctx.raw)}` } } },
+      scales: { y: { ticks: { callback: v => fmt$(v) } } },
+    },
+  });
+
+  // Response compare chart
+  if (chartResponseCompare) chartResponseCompare.destroy();
+  chartResponseCompare = new Chart(document.getElementById('chartResponseCompare'), {
+    type: 'bar',
+    data: {
+      labels: names,
+      datasets: [
+        { label: 'Current Response', data: names.map(n => channelResponseAtSpend(n, SAMPLE_SPENDS[n]||0)), backgroundColor: '#94a3b8' },
+        { label: 'Optimized Response', data: names.map(n => optResult[n].response), backgroundColor: names.map(n => CHANNEL_COLORS[n]) },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: 'top' }, tooltip: { callbacks: { label: ctx => `${ctx.dataset.label}: ${fmtNum(ctx.raw)}` } } },
+      scales: { y: { ticks: { callback: v => fmtNum(v) } } },
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════
+// EXPORT
+// ═══════════════════════════════════════════════════
+
+function downloadText(filename, text) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' }));
+  a.download = filename; a.click(); URL.revokeObjectURL(a.href);
+}
+
+function exportCurvesCSV() {
+  let csv = 'Channel,Spend,Response,Marginal,ROI\n';
+  Object.keys(curveCache).forEach(name => {
+    const c = curveCache[name];
+    const step = Math.max(1, Math.floor(c.spend.length / 50));
+    for (let i = 0; i < c.spend.length; i += step) {
+      const s = c.spend[i], r = c.response[i], m = c.marginal[i];
+      csv += `${name},${s.toFixed(2)},${r.toFixed(2)},${m.toFixed(6)},${s>0?(r/s).toFixed(6):'0'}\n`;
+    }
+  });
+  downloadText('mmm_curves.csv', csv);
+}
+
+function exportOptCSV() {
+  if (!optResult) { alert('Run optimization first.'); return; }
+  let csv = 'Channel,Current_Spend,Optimized_Spend,Change,Current_Response,Optimized_Response,Marginal_ROI\n';
+  Object.keys(optResult).forEach(n => {
+    const curr = SAMPLE_SPENDS[n]||0;
+    const opt = optResult[n];
+    csv += `${n},${curr.toFixed(0)},${opt.spend.toFixed(0)},${(opt.spend-curr).toFixed(0)},${channelResponseAtSpend(n,curr).toFixed(0)},${opt.response.toFixed(0)},${opt.marginal.toFixed(6)}\n`;
+  });
+  downloadText('mmm_optimization.csv', csv);
+}
+
+function exportConfigJSON() {
+  const config = {};
+  Object.keys(channels).forEach(n => {
+    config[n] = { ...channels[n] };
+  });
+  downloadText('mmm_config.json', JSON.stringify(config, null, 2));
+}
+
+// ═══════════════════════════════════════════════════
+// BOOT
+// ═══════════════════════════════════════════════════
+
+initChannels();
+renderChannelTabs();
+renderChannelControls();
+initCharts();
+updateAll();
+</script>
+</body>
+</html>

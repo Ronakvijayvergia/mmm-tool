@@ -1,0 +1,9 @@
+# Vercel
+.vercel
+
+# OS / editor junk
+.DS_Store
+.claude/
+
+# Backups
+*.bak

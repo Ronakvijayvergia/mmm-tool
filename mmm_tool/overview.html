@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MMM Tool — Architecture & Overview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fa; color: #1a1a2e; line-height: 1.6; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 24px; }
+  h1 { font-size: 2rem; color: #1a237e; margin-bottom: 4px; }
+  .subtitle { color: #546e7a; font-size: 1.1rem; margin-bottom: 32px; }
+  h2 { font-size: 1.4rem; color: #1a237e; margin: 32px 0 16px; border-bottom: 2px solid #e3f2fd; padding-bottom: 8px; }
+  h3 { font-size: 1.1rem; color: #37474f; margin: 16px 0 8px; }
+
+  .card-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin: 20px 0; }
+  .card { background: #fff; border-radius: 12px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); border-left: 4px solid #1565c0; }
+  .card.green { border-left-color: #2e7d32; }
+  .card.orange { border-left-color: #ef6c00; }
+  .card.purple { border-left-color: #7b1fa2; }
+  .card.red { border-left-color: #c62828; }
+  .card h3 { margin-top: 0; }
+  .card ul { margin-left: 20px; }
+  .card li { margin: 4px 0; font-size: 0.95rem; }
+
+  .arch-diagram { background: #fff; border-radius: 12px; padding: 32px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); margin: 20px 0; overflow-x: auto; }
+  .flow { display: flex; align-items: center; justify-content: center; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+  .flow-box { background: #e3f2fd; border: 2px solid #1565c0; border-radius: 10px; padding: 14px 20px; text-align: center; font-weight: 600; font-size: 0.9rem; min-width: 140px; }
+  .flow-box.core { background: #e8f5e9; border-color: #2e7d32; }
+  .flow-box.output { background: #f3e5f5; border-color: #7b1fa2; }
+  .flow-arrow { font-size: 1.5rem; color: #90a4ae; }
+
+  .file-tree { background: #263238; color: #eceff1; border-radius: 10px; padding: 20px 24px; font-family: 'Menlo', 'Monaco', monospace; font-size: 0.85rem; line-height: 1.8; margin: 16px 0; }
+  .file-tree .dir { color: #80cbc4; }
+  .file-tree .file { color: #fff59d; }
+  .file-tree .desc { color: #90a4ae; }
+
+  .cmd-box { background: #1a237e; color: #e8eaf6; border-radius: 8px; padding: 16px 20px; font-family: monospace; font-size: 0.95rem; margin: 12px 0; }
+  .cmd-box .prompt { color: #69f0ae; }
+
+  .metrics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 16px 0; }
+  .metric { background: #fff; border-radius: 8px; padding: 16px; text-align: center; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .metric .value { font-size: 1.6rem; font-weight: 700; color: #1565c0; }
+  .metric .label { font-size: 0.8rem; color: #78909c; text-transform: uppercase; letter-spacing: 0.5px; }
+
+  .steps { counter-reset: step; }
+  .step { display: flex; gap: 16px; margin: 16px 0; align-items: flex-start; }
+  .step-num { background: #1565c0; color: white; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; }
+  .step-content { flex: 1; }
+  .step-content strong { color: #1a237e; }
+
+  .concept-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin: 16px 0; }
+  .concept { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 6px rgba(0,0,0,0.06); }
+  .concept h4 { color: #1565c0; margin-bottom: 8px; font-size: 1rem; }
+  .concept p { font-size: 0.9rem; color: #546e7a; }
+
+  table { width: 100%; border-collapse: collapse; margin: 16px 0; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  th { background: #e3f2fd; color: #1a237e; padding: 12px 16px; text-align: left; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.5px; }
+  td { padding: 10px 16px; border-top: 1px solid #eceff1; font-size: 0.9rem; }
+  tr:hover td { background: #f5f5f5; }
+
+  .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; margin: 2px; }
+  .tag-blue { background: #e3f2fd; color: #1565c0; }
+  .tag-green { background: #e8f5e9; color: #2e7d32; }
+  .tag-orange { background: #fff3e0; color: #ef6c00; }
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>Marketing Mix Modeling Tool</h1>
+<p class="subtitle">End-to-end MMM platform powered by Meta Robyn methodology &mdash; built in Python with Streamlit</p>
+
+<div class="metrics-grid">
+  <div class="metric"><div class="value">17</div><div class="label">Python Files</div></div>
+  <div class="metric"><div class="value">3,547</div><div class="label">Lines of Code</div></div>
+  <div class="metric"><div class="value">7</div><div class="label">UI Pages</div></div>
+  <div class="metric"><div class="value">6</div><div class="label">Media Channels</div></div>
+</div>
+
+<h2>Architecture Diagram</h2>
+<div class="arch-diagram">
+  <h3 style="text-align:center; color:#546e7a; margin-bottom:20px;">Data Flow Pipeline</h3>
+  <div class="flow">
+    <div class="flow-box">Raw Data<br><small>CSV / Excel</small></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box">Variable<br>Mapping</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box">Feature<br>Engineering</div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box core">Adstock<br><small>Carryover</small></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box core">Saturation<br><small>Diminishing Returns</small></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box core">Ridge / ElasticNet<br><small>Regression</small></div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box output">Results &<br>Optimization</div>
+  </div>
+
+  <h3 style="text-align:center; color:#546e7a; margin: 32px 0 20px;">Module Architecture</h3>
+  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px;">
+    <div style="background:#e3f2fd; border-radius:10px; padding:16px;">
+      <h4 style="color:#1565c0; margin-bottom:8px;">Streamlit UI Layer</h4>
+      <ul style="list-style:none; font-size:0.85rem;">
+        <li>&#x1F3E0; Home / Quick Start</li>
+        <li>&#x1F4CA; Data Upload & Mapping</li>
+        <li>&#x1F527; Feature Engineering</li>
+        <li>&#x1F50D; Exploratory Analysis</li>
+        <li>&#x2699;&#xFE0F; Model Configuration</li>
+        <li>&#x1F680; Training & Results</li>
+        <li>&#x1F4B0; Budget Optimizer</li>
+        <li>&#x1F52C; Calibration</li>
+      </ul>
+    </div>
+    <div style="background:#e8f5e9; border-radius:10px; padding:16px;">
+      <h4 style="color:#2e7d32; margin-bottom:8px;">Core MMM Engine</h4>
+      <ul style="list-style:none; font-size:0.85rem;">
+        <li><strong>adstock.py</strong> &mdash; Geometric, Weibull CDF/PDF</li>
+        <li><strong>saturation.py</strong> &mdash; Hill, Power, Logistic, M-M</li>
+        <li><strong>mmm_model.py</strong> &mdash; Full pipeline + decomposition</li>
+        <li><strong>optimizer.py</strong> &mdash; Budget optimization (SLSQP)</li>
+      </ul>
+    </div>
+    <div style="background:#fff3e0; border-radius:10px; padding:16px;">
+      <h4 style="color:#ef6c00; margin-bottom:8px;">Utilities</h4>
+      <ul style="list-style:none; font-size:0.85rem;">
+        <li><strong>synthetic_data.py</strong> &mdash; Demo data generator</li>
+        <li><strong>helpers.py</strong> &mdash; Auto-detect, VIF, stats</li>
+        <li><strong>sample_mmm_data.csv</strong> &mdash; 156-week dataset</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<h2>Quick Start</h2>
+<div class="steps">
+  <div class="step">
+    <div class="step-num">1</div>
+    <div class="step-content"><strong>Install dependencies</strong><br>
+      <div class="cmd-box"><span class="prompt">$</span> cd mmm_tool && pip install -r requirements.txt</div>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">2</div>
+    <div class="step-content"><strong>Launch the interactive UI</strong><br>
+      <div class="cmd-box"><span class="prompt">$</span> streamlit run app.py</div>
+    </div>
+  </div>
+  <div class="step">
+    <div class="step-num">3</div>
+    <div class="step-content"><strong>Or run the CLI demo</strong><br>
+      <div class="cmd-box"><span class="prompt">$</span> python run_demo.py</div>
+    </div>
+  </div>
+</div>
+
+<h2>Project Structure</h2>
+<div class="file-tree">
+<span class="dir">mmm_tool/</span><br>
+├── <span class="file">app.py</span> <span class="desc">&mdash; Main Streamlit application (221 lines)</span><br>
+├── <span class="file">run_demo.py</span> <span class="desc">&mdash; CLI demo script (185 lines)</span><br>
+├── <span class="file">requirements.txt</span> <span class="desc">&mdash; Python dependencies</span><br>
+├── <span class="file">architecture.mermaid</span> <span class="desc">&mdash; Architecture diagram (Mermaid)</span><br>
+├── <span class="dir">core/</span> <span class="desc">&mdash; MMM engine (823 lines)</span><br>
+│   ├── <span class="file">adstock.py</span> <span class="desc">&mdash; Adstock transformations (123 lines)</span><br>
+│   ├── <span class="file">saturation.py</span> <span class="desc">&mdash; Saturation curves (135 lines)</span><br>
+│   ├── <span class="file">mmm_model.py</span> <span class="desc">&mdash; Core model + decomposition (360 lines)</span><br>
+│   └── <span class="file">optimizer.py</span> <span class="desc">&mdash; Budget optimizer (205 lines)</span><br>
+├── <span class="dir">modules/</span> <span class="desc">&mdash; Streamlit UI pages (1,676 lines)</span><br>
+│   ├── <span class="file">data_upload.py</span> <span class="desc">&mdash; Upload & variable mapping</span><br>
+│   ├── <span class="file">feature_engineering.py</span> <span class="desc">&mdash; Transforms, bounds, combinations</span><br>
+│   ├── <span class="file">eda.py</span> <span class="desc">&mdash; Exploratory analysis & VIF</span><br>
+│   ├── <span class="file">model_config.py</span> <span class="desc">&mdash; Hyperparameter configuration</span><br>
+│   ├── <span class="file">model_training.py</span> <span class="desc">&mdash; Training, metrics, decomposition</span><br>
+│   ├── <span class="file">budget_optimizer.py</span> <span class="desc">&mdash; Optimization dashboard</span><br>
+│   └── <span class="file">calibration.py</span> <span class="desc">&mdash; Ground truth validation</span><br>
+├── <span class="dir">utils/</span> <span class="desc">&mdash; Helpers (399 lines)</span><br>
+│   ├── <span class="file">synthetic_data.py</span> <span class="desc">&mdash; Demo data generator</span><br>
+│   └── <span class="file">helpers.py</span> <span class="desc">&mdash; Detection, VIF, formatting</span><br>
+└── <span class="dir">demo_data/</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;└── <span class="file">sample_mmm_data.csv</span> <span class="desc">&mdash; 156-week sample dataset</span>
+</div>
+
+<h2>Key MMM Concepts Implemented</h2>
+<div class="concept-grid">
+  <div class="concept">
+    <h4>Adstock (Carryover)</h4>
+    <p>Models how marketing effects persist over time. TV ad seen today influences purchases for weeks. Supports geometric decay and Weibull distributions for flexible decay patterns.</p>
+    <span class="tag tag-green">Geometric</span>
+    <span class="tag tag-green">Weibull CDF</span>
+    <span class="tag tag-green">Weibull PDF</span>
+  </div>
+  <div class="concept">
+    <h4>Saturation (Diminishing Returns)</h4>
+    <p>Captures how each additional dollar spent delivers less incremental value. The Hill function is the standard in Meta Robyn. Four curve types available.</p>
+    <span class="tag tag-blue">Hill</span>
+    <span class="tag tag-blue">Power</span>
+    <span class="tag tag-blue">Logistic</span>
+    <span class="tag tag-blue">Michaelis-Menten</span>
+  </div>
+  <div class="concept">
+    <h4>Budget Optimization</h4>
+    <p>Uses the equimarginal principle: reallocate budget until marginal returns equalize across channels. Constrained optimization with SLSQP solver.</p>
+    <span class="tag tag-orange">Equimarginal</span>
+    <span class="tag tag-orange">Marginal ROI</span>
+    <span class="tag tag-orange">Scenarios</span>
+  </div>
+  <div class="concept">
+    <h4>Calibration</h4>
+    <p>Anchor MMM outputs with ground truth from lift studies, geo-experiments, and A/B tests. Combines statistical modeling with empirical evidence.</p>
+    <span class="tag tag-blue">Geo-Tests</span>
+    <span class="tag tag-blue">Lift Studies</span>
+    <span class="tag tag-blue">A/B Tests</span>
+  </div>
+</div>
+
+<h2>Dependencies</h2>
+<table>
+  <tr><th>Package</th><th>Purpose</th><th>Version</th></tr>
+  <tr><td>Streamlit</td><td>Interactive web UI framework</td><td>&ge; 1.28</td></tr>
+  <tr><td>Pandas</td><td>Data manipulation and analysis</td><td>&ge; 1.5</td></tr>
+  <tr><td>NumPy</td><td>Numerical computing</td><td>&ge; 1.23</td></tr>
+  <tr><td>Plotly</td><td>Interactive visualizations</td><td>&ge; 5.15</td></tr>
+  <tr><td>Scikit-learn</td><td>Ridge/ElasticNet regression, scaling, metrics</td><td>&ge; 1.2</td></tr>
+  <tr><td>SciPy</td><td>Optimization (SLSQP), Weibull distributions</td><td>&ge; 1.10</td></tr>
+  <tr><td>OpenPyXL</td><td>Excel file support</td><td>&ge; 3.1</td></tr>
+</table>
+
+<h2>Synthetic Data Specification</h2>
+<table>
+  <tr><th>Category</th><th>Variables</th><th>Description</th></tr>
+  <tr><td><span class="tag tag-blue">Media Spend</span></td><td>tv_spend, digital_spend, social_media_spend, search_spend, print_spend, radio_spend</td><td>6 channels with autocorrelated spend, seasonal patterns, and occasional pauses</td></tr>
+  <tr><td><span class="tag tag-green">Organic</span></td><td>organic_traffic, word_of_mouth, email_list_size</td><td>Non-paid factors with growth trends</td></tr>
+  <tr><td><span class="tag tag-orange">Context</span></td><td>consumer_confidence, competitor_spend, is_holiday, avg_temperature</td><td>External factors affecting demand</td></tr>
+  <tr><td><strong>Target</strong></td><td>revenue</td><td>Weekly revenue with known ground truth effects from all inputs</td></tr>
+</table>
+
+<div style="margin-top: 40px; padding: 20px; background: #e3f2fd; border-radius: 10px; text-align: center;">
+  <p style="font-size: 0.9rem; color: #546e7a;">
+    Built with Python &bull; Streamlit &bull; Plotly &bull; Scikit-learn &bull; SciPy<br>
+    Based on Meta Robyn MMM methodology
+  </p>
+</div>
+
+</div>
+</body>
+</html>

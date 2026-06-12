@@ -1,0 +1,58 @@
+graph TB
+    subgraph UI["Streamlit UI Layer"]
+        HOME["Home / Quick Start"]
+        UPLOAD["Data Upload & Variable Mapping"]
+        FE["Feature Engineering"]
+        EDA["Exploratory Data Analysis"]
+        CONFIG["Model Configuration"]
+        TRAIN["Model Training & Results"]
+        BUDGET["Budget Optimizer"]
+        CAL["Calibration & Validation"]
+    end
+
+    subgraph CORE["Core MMM Engine"]
+        ADSTOCK["Adstock Module<br/>(Geometric, Weibull CDF/PDF)"]
+        SAT["Saturation Module<br/>(Hill, Power, Logistic, Michaelis-Menten)"]
+        MODEL["MMM Model<br/>(Ridge / ElasticNet Regression)"]
+        OPT["Budget Optimizer<br/>(Equimarginal Principle)"]
+    end
+
+    subgraph UTILS["Utilities"]
+        SYNTH["Synthetic Data Generator"]
+        HELPERS["Helpers<br/>(Auto-detect, VIF, Stationarity)"]
+    end
+
+    subgraph DATA["Data Flow"]
+        RAW["Raw Data<br/>(CSV / Excel)"]
+        MAPPED["Mapped Variables<br/>(Media, Organic, Context)"]
+        ENGINEERED["Engineered Features<br/>(Transforms, Bounds)"]
+        TRANSFORMED["Adstocked + Saturated<br/>Features"]
+        RESULTS["Model Results<br/>(Coefficients, Metrics)"]
+        OPTIMAL["Optimal Allocation<br/>(Budget Recommendations)"]
+    end
+
+    RAW -->|Upload| UPLOAD
+    UPLOAD -->|Map| MAPPED
+    MAPPED -->|Transform| FE
+    FE -->|Analyze| ENGINEERED
+    ENGINEERED -->|Visualize| EDA
+    ENGINEERED -->|Configure| CONFIG
+
+    CONFIG -->|Train| TRAIN
+    ENGINEERED --> MODEL
+    MODEL -->|Adstock| ADSTOCK
+    MODEL -->|Saturation| SAT
+    MODEL --> RESULTS
+    RESULTS -->|Optimize| BUDGET
+    BUDGET --> OPT
+    OPT --> OPTIMAL
+    RESULTS -->|Validate| CAL
+
+    SYNTH -->|Demo Data| UPLOAD
+    HELPERS --> UPLOAD
+    HELPERS --> EDA
+
+    style UI fill:#e3f2fd,stroke:#1565c0
+    style CORE fill:#e8f5e9,stroke:#2e7d32
+    style UTILS fill:#fff3e0,stroke:#ef6c00
+    style DATA fill:#f3e5f5,stroke:#7b1fa2

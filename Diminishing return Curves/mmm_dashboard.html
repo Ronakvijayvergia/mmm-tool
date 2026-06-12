@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MMM Diminishing Returns Tool</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f8fafc;color:#1e293b;line-height:1.5}
+.app{display:flex;min-height:100vh}
+.side{width:320px;background:#fff;border-right:1px solid #e2e8f0;padding:20px;overflow-y:auto;flex-shrink:0}
+.main{flex:1;padding:20px 28px;overflow-y:auto}
+h1{font-size:17px;margin-bottom:2px}
+.sub{font-size:11px;color:#64748b;margin-bottom:16px}
+.stit{font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.5px;margin:16px 0 8px}
+.tabs{display:flex;gap:3px;flex-wrap:wrap;margin-bottom:12px}
+.ctab{padding:5px 13px;border-radius:16px;font-size:12px;font-weight:600;border:2px solid #e2e8f0;background:#fff;cursor:pointer}
+.ctab:hover{border-color:#2563eb}
+.ctab.on{background:#2563eb;color:#fff;border-color:#2563eb}
+.cg{margin-bottom:12px}
+.cg label{display:block;font-size:11px;font-weight:600;margin-bottom:3px}
+.cg .h{font-size:10px;color:#94a3b8;margin-bottom:3px}
+.cg select,.cg input[type=number]{width:100%;padding:6px 8px;border:1px solid #e2e8f0;border-radius:5px;font-size:12px;background:#fff;outline:none}
+.cg select:focus,.cg input:focus{border-color:#2563eb}
+.cg input[type=range]{width:100%;padding:0;margin-top:2px}
+.rr{display:flex;justify-content:space-between;align-items:center}
+.rv{font-size:11px;font-weight:600;color:#2563eb;min-width:36px;text-align:right}
+.pg{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+.hr{border:none;border-top:1px solid #e2e8f0;margin:14px 0}
+.tbar{display:flex;gap:2px;background:#f1f5f9;border-radius:7px;padding:3px;margin-bottom:16px}
+.tb{flex:1;padding:9px 6px;text-align:center;font-size:12px;font-weight:600;border-radius:5px;cursor:pointer;color:#64748b}
+.tb:hover{color:#1e293b}
+.tb.on{background:#fff;color:#2563eb;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.tc{display:none}.tc.on{display:block}
+.kr{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:18px}
+.kpi{background:#fff;border-radius:8px;padding:14px;border:1px solid #e2e8f0}
+.kpi .kl{font-size:10px;font-weight:600;color:#64748b;text-transform:uppercase}
+.kpi .kv{font-size:22px;font-weight:700;margin-top:3px}
+.kpi .ks{font-size:10px;color:#94a3b8;margin-top:1px}
+.kv.bl{color:#2563eb}.kv.gn{color:#059669}.kv.or{color:#d97706}.kv.pu{color:#7c3aed}.kv.rd{color:#dc2626}
+.card{background:#fff;border-radius:8px;padding:16px;border:1px solid #e2e8f0;margin-bottom:16px}
+.card h3{font-size:14px;font-weight:700;margin-bottom:10px}
+.grow{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+canvas{width:100%;display:block;border-radius:6px}
+.btn{padding:8px 18px;border-radius:5px;font-size:12px;font-weight:600;border:none;cursor:pointer}
+.bp{background:#2563eb;color:#fff}.bp:hover{background:#1d4ed8}
+.bo{background:#fff;color:#2563eb;border:1px solid #2563eb}.bo:hover{background:#dbeafe}
+.brow{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:16px}
+.brow .cg{margin-bottom:0}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{background:#f8fafc;padding:8px 10px;text-align:right;font-weight:600;font-size:11px;color:#64748b;border-bottom:2px solid #e2e8f0}
+th:first-child{text-align:left}
+td{padding:8px 10px;border-bottom:1px solid #f1f5f9;text-align:right;font-variant-numeric:tabular-nums}
+td:first-child{text-align:left;font-weight:500}
+tr:hover td{background:#f8fafc}
+.bar-row{display:flex;align-items:center;gap:6px;margin-bottom:6px}
+.bar-row .bl{width:52px;font-size:11px;font-weight:600}
+.bar-row .bt{flex:1;height:22px;background:#f1f5f9;border-radius:3px;overflow:hidden}
+.bar-row .bf{height:100%;border-radius:3px;display:flex;align-items:center;padding-left:6px;font-size:10px;font-weight:600;color:#fff;transition:width .3s}
+.bar-row .bv{width:60px;font-size:11px;text-align:right}
+.lift{display:inline-block;padding:3px 10px;border-radius:14px;font-size:12px;font-weight:700}
+.lift.pos{background:#d1fae5;color:#059669}
+.lift.neg{background:#fee2e2;color:#dc2626}
+.opt2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+.ebtns{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+@media(max-width:900px){.app{flex-direction:column}.side{width:100%}.grow,.opt2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+<aside class="side">
+<h1>MMM Curve Tool</h1>
+<p class="sub">Configure channels, view curves, optimize budget</p>
+<div class="stit">Channels</div>
+<div class="tabs" id="chTabs"></div>
+<div id="chCtrl"></div>
+<hr class="hr">
+<div class="stit">Global</div>
+<div class="cg"><label>Spend Range</label><div class="rr"><input type="range" id="sMult" min="0.5" max="3" step="0.1" value="1.5" oninput="G()"><span class="rv" id="sMV">1.5x</span></div></div>
+</aside>
+<div class="main">
+<div class="tbar">
+<div class="tb on" onclick="T('c')">Response Curves</div>
+<div class="tb" onclick="T('m')">Marginal ROI</div>
+<div class="tb" onclick="T('o')">Optimize Budget</div>
+<div class="tb" onclick="T('t')">Data Table</div>
+<div class="tb" onclick="T('e')">Export</div>
+</div>
+<div class="tc on" id="tc-c">
+<div class="kr" id="kpis"></div>
+<div class="card"><h3>All Channels — Diminishing Returns</h3><canvas id="cv1" height="280"></canvas></div>
+<div class="grow">
+<div class="card"><h3 id="cv2t">TV — Response</h3><canvas id="cv2" height="220"></canvas></div>
+<div class="card"><h3>Normalized (0–100%)</h3><canvas id="cv3" height="220"></canvas></div>
+</div>
+</div>
+<div class="tc" id="tc-m">
+<div class="card"><h3>Marginal Response — All Channels</h3><canvas id="cv4" height="300"></canvas></div>
+<div class="card"><h3 id="cv5t">TV — Marginal</h3><canvas id="cv5" height="240"></canvas></div>
+</div>
+<div class="tc" id="tc-o">
+<div class="brow">
+<div class="cg"><label>Total Budget ($)</label><input type="number" id="tBud" value="100000" step="5000" style="width:160px"></div>
+<button class="btn bp" onclick="OPT()">Optimize</button>
+</div>
+<div id="oRes" style="display:none">
+<div class="kr" id="oKpi"></div>
+<div class="opt2"><div class="card"><h3>Current</h3><div id="bCur"></div></div><div class="card"><h3>Optimized</h3><div id="bOpt"></div></div></div>
+</div>
+</div>
+<div class="tc" id="tc-t">
+<div class="cg" style="max-width:160px;margin-bottom:12px"><label>Channel</label><select id="tCh" onchange="TBL()"></select></div>
+<div class="card"><table id="dtbl"><thead><tr><th>Spend</th><th>Response</th><th>Marginal</th><th>ROI</th></tr></thead><tbody></tbody></table></div>
+</div>
+<div class="tc" id="tc-e">
+<div class="card"><h3>Export</h3><p style="color:#94a3b8;font-size:12px;margin-bottom:12px">Download curve data or config.</p>
+<div class="ebtns"><button class="btn bp" onclick="ECSV()">Curves CSV</button><button class="btn bo" onclick="EJSON()">Config JSON</button></div></div>
+</div>
+</div>
+</div>
+<script>
+var CC={TV:'#2563eb',Social:'#7c3aed',Search:'#059669',Email:'#d97706',Display:'#dc2626'};
+var EQ=['Linear','Logarithmic','Power','Exponential','Hill','Quadratic'];
+var DP={Linear:{beta:.5},Logarithmic:{beta:500,gamma:.001},Power:{beta:50,gamma:.6},Exponential:{beta:5e3,gamma:1e-4},Hill:{beta:5e3,gamma:2,delta:500},Quadratic:{beta:1,gamma:5e-4}};
+var SP={TV:5e4,Social:15e3,Search:25e3,Email:5e3,Display:1e4};
+var ch={},ac='TV',cc={},oR=null;
+
+function rf(t,x,p){var b=p.beta,g=p.gamma,d=p.delta;switch(t){case'Linear':return b*x;case'Logarithmic':return b*Math.log(g*x+1);case'Power':return b*Math.pow(Math.max(x,0),g);case'Exponential':return b*(1-Math.exp(-g*x));case'Hill':var xg=Math.pow(Math.max(x,0),g),dg=Math.pow(Math.max(d,1e-10),g);return b*xg/(xg+dg);case'Quadratic':return b*x-g*x*x}return 0}
+function mf(t,x,p){var b=p.beta,g=p.gamma,d=p.delta,e=Math.max(x,1e-10);switch(t){case'Linear':return b;case'Logarithmic':return b*g/(g*x+1);case'Power':return b*g*Math.pow(e,g-1);case'Exponential':return b*g*Math.exp(-g*x);case'Hill':var xg=Math.pow(e,g),dg=Math.pow(Math.max(d,1e-10),g);return b*g*Math.pow(e,g-1)*dg/Math.pow(xg+dg,2);case'Quadratic':return b-2*g*x}return 0}
+function ss(s,c){if(c.at==='geometric'&&c.ad<1)return s/(1-c.ad);if(c.at==='weibull'){var n=104,ml=13,w=[],ws=0;for(var l=0;l<ml;l++){var v=(c.ws/c.wc)*Math.pow(l/c.wc,c.ws-1)*Math.exp(-Math.pow(l/c.wc,c.ws));if(!l&&v<1e-10)v=1e-10;w.push(v);ws+=v}for(l=0;l<ml;l++)w[l]/=ws;var a=new Array(n).fill(0),sp=new Array(n).fill(s);for(var t=0;t<n;t++)for(l=0;l<Math.min(ml,t+1);l++)a[t]+=w[l]*sp[t-l];return a[n-1]}return s}
+function gen(){var m=parseFloat(document.getElementById('sMult').value),res=160;cc={};for(var nm in ch){var c=ch[nm],mx=(SP[nm]||2e4)*m,sp=[],rp=[],mp=[];for(var i=0;i<res;i++){var s=mx/(res-1)*i,t=ss(s,c);sp.push(s);rp.push(rf(c.eq,t,c.p));var mg=mf(c.eq,t,c.p);if(c.at==='geometric'&&c.ad<1)mg*=1/(1-c.ad);mp.push(mg)}cc[nm]={s:sp,r:rp,m:mp}}}
+function crs(n,s){var c=ch[n],t=ss(s,c);return rf(c.eq,t,c.p)}
+function cms(n,s){var c=ch[n],t=ss(s,c);var mg=mf(c.eq,t,c.p);if(c.at==='geometric'&&c.ad<1)mg*=1/(1-c.ad);return mg}
+
+function init(){var d=[{eq:'Hill',p:{beta:8e3,gamma:1.8,delta:4e4},ad:.7},{eq:'Logarithmic',p:{beta:600,gamma:5e-4},ad:.3},{eq:'Power',p:{beta:80,gamma:.55},ad:.1},{eq:'Exponential',p:{beta:2e3,gamma:8e-4},ad:.2},{eq:'Logarithmic',p:{beta:400,gamma:3e-4},ad:.5}];
+['TV','Social','Search','Email','Display'].forEach(function(n,i){ch[n]={eq:d[i].eq,p:Object.assign({},d[i].p),at:'geometric',ad:d[i].ad,ws:1,wc:2,lag:0}})}
+
+function rtabs(){var b=document.getElementById('chTabs');b.innerHTML='';for(var n in ch){var e=document.createElement('div');e.className='ctab'+(n===ac?' on':'');if(n===ac){e.style.background=CC[n];e.style.borderColor=CC[n];e.style.color='#fff'}e.textContent=n;e.setAttribute('data-n',n);e.onclick=function(){ac=this.getAttribute('data-n');rtabs();rctrl();UA()};b.appendChild(e)}}
+
+function rctrl(){var c=ch[ac],el=document.getElementById('chCtrl');var ep=Object.keys(DP[c.eq]);var ph=ep.map(function(p){return'<div class="cg"><label>'+p+'</label><input type="number" id="p_'+p+'" value="'+(c.p[p]!=null?c.p[p]:DP[c.eq][p])+'" step="'+((p==='gamma'&&c.p[p]<.01)?1e-5:(c.p[p]||1)*.05)+'" onchange="PP()"></div>'}).join('');
+el.innerHTML='<div class="stit">'+ac+' Settings</div><div class="cg"><label>Response Function</label><select id="eqT" onchange="EQ2()">'+EQ.map(function(t){return'<option'+(t===c.eq?' selected':'')+'>'+t+'</option>'}).join('')+'</select></div><div class="pg">'+ph+'</div><hr class="hr"><div class="cg"><label>Adstock</label><select id="aT" onchange="AT()"><option value="none"'+(c.at==='none'?' selected':'')+'>None</option><option value="geometric"'+(c.at==='geometric'?' selected':'')+'>Geometric</option><option value="weibull"'+(c.at==='weibull'?' selected':'')+'>Weibull</option></select></div>'+(c.at==='geometric'?'<div class="cg"><label>Decay</label><div class="h">TV: 0.6-0.8 · Digital: 0.1-0.4</div><div class="rr"><input type="range" id="aD" min="0" max="0.95" step="0.05" value="'+c.ad+'" oninput="AP()"><span class="rv" id="aDV">'+c.ad+'</span></div></div>':'')+(c.at==='weibull'?'<div class="pg"><div class="cg"><label>Shape</label><input type="number" id="wS" value="'+c.ws+'" step="0.1" min="0.1" onchange="AP()"></div><div class="cg"><label>Scale</label><input type="number" id="wC" value="'+c.wc+'" step="0.5" min="0.5" onchange="AP()"></div></div>':'')+'<div class="cg"><label>Lag</label><div class="rr"><input type="range" id="lP" min="0" max="12" value="'+c.lag+'" oninput="LP()"><span class="rv" id="lV">'+c.lag+'</span></div></div>'}
+
+function EQ2(){ch[ac].eq=document.getElementById('eqT').value;ch[ac].p=Object.assign({},DP[ch[ac].eq]);rctrl();UA()}
+function PP(){var c=ch[ac];Object.keys(DP[c.eq]).forEach(function(p){var e=document.getElementById('p_'+p);if(e)c.p[p]=parseFloat(e.value)||0});UA()}
+function AT(){ch[ac].at=document.getElementById('aT').value;rctrl();UA()}
+function AP(){var c=ch[ac];if(c.at==='geometric'){c.ad=parseFloat(document.getElementById('aD').value);document.getElementById('aDV').textContent=c.ad}else if(c.at==='weibull'){c.ws=parseFloat(document.getElementById('wS').value)||1;c.wc=parseFloat(document.getElementById('wC').value)||2}UA()}
+function LP(){ch[ac].lag=parseInt(document.getElementById('lP').value);document.getElementById('lV').textContent=ch[ac].lag;UA()}
+function G(){document.getElementById('sMV').textContent=document.getElementById('sMult').value+'x';UA()}
+function T(id){document.querySelectorAll('.tb').forEach(function(e,i){e.classList.toggle('on',['c','m','o','t','e'][i]===id)});document.querySelectorAll('.tc').forEach(function(e){e.classList.remove('on')});document.getElementById('tc-'+id).classList.add('on');UA()}
+
+function f$(v){if(Math.abs(v)>=1e6)return'$'+(v/1e6).toFixed(1)+'M';if(Math.abs(v)>=1e3)return'$'+(v/1e3).toFixed(0)+'K';return'$'+v.toFixed(0)}
+function fN(v){if(Math.abs(v)>=1e6)return(v/1e6).toFixed(1)+'M';if(Math.abs(v)>=1e3)return(v/1e3).toFixed(1)+'K';return v<10?v.toFixed(2):v.toFixed(0)}
+
+// ─── Canvas Drawing ───────────────────
+function drawLine(cvId,datasets,opts){
+var cv=document.getElementById(cvId);if(!cv)return;
+var dpr=window.devicePixelRatio||1;
+var w=cv.parentElement.clientWidth-32;
+var h=parseInt(cv.getAttribute('height'))||240;
+cv.width=w*dpr;cv.height=h*dpr;cv.style.width=w+'px';cv.style.height=h+'px';
+var ctx=cv.getContext('2d');ctx.scale(dpr,dpr);
+var pad={t:30,r:20,b:40,l:65};
+var pw=w-pad.l-pad.r,ph=h-pad.t-pad.b;
+
+// Compute ranges
+var xMin=Infinity,xMax=-Infinity,yMin=Infinity,yMax=-Infinity;
+datasets.forEach(function(d){d.x.forEach(function(v){if(v<xMin)xMin=v;if(v>xMax)xMax=v});d.y.forEach(function(v){if(v<yMin)yMin=v;if(v>yMax)yMax=v})});
+if(opts&&opts.yMin!=null)yMin=opts.yMin;
+if(yMin===yMax){yMax=yMin+1}
+var xRange=xMax-xMin||1,yRange=yMax-yMin||1;
+// Add 5% padding
+yMin-=yRange*.05;yMax+=yRange*.05;yRange=yMax-yMin;
+
+function tx(v){return pad.l+(v-xMin)/xRange*pw}
+function ty(v){return pad.t+ph-(v-yMin)/yRange*ph}
+
+// Background
+ctx.fillStyle='#fafafa';ctx.fillRect(pad.l,pad.t,pw,ph);
+
+// Grid
+ctx.strokeStyle='#f0f0f0';ctx.lineWidth=1;
+var ny=5;for(var i=0;i<=ny;i++){var yv=yMin+yRange/ny*i;var yy=ty(yv);ctx.beginPath();ctx.moveTo(pad.l,yy);ctx.lineTo(pad.l+pw,yy);ctx.stroke();
+ctx.fillStyle='#94a3b8';ctx.font='10px -apple-system,sans-serif';ctx.textAlign='right';ctx.fillText(opts&&opts.yFmt?opts.yFmt(yv):fN(yv),pad.l-6,yy+3)}
+var nx=6;for(i=0;i<=nx;i++){var xv=xMin+xRange/nx*i;var xx=tx(xv);ctx.beginPath();ctx.moveTo(xx,pad.t);ctx.lineTo(xx,pad.t+ph);ctx.stroke();
+ctx.fillStyle='#94a3b8';ctx.textAlign='center';ctx.fillText(f$(xv),xx,h-pad.b+18)}
+
+// Axes labels
+ctx.fillStyle='#64748b';ctx.font='11px -apple-system,sans-serif';
+ctx.textAlign='center';ctx.fillText('Spend ($)',pad.l+pw/2,h-4);
+ctx.save();ctx.translate(12,pad.t+ph/2);ctx.rotate(-Math.PI/2);ctx.fillText(opts&&opts.yLabel||'Response',0,0);ctx.restore();
+
+// Lines
+datasets.forEach(function(d){
+ctx.strokeStyle=d.color||'#2563eb';ctx.lineWidth=d.width||2.5;ctx.beginPath();
+var started=false;
+for(var j=0;j<d.x.length;j++){var px=tx(d.x[j]),py=ty(d.y[j]);
+if(py>=pad.t-5&&py<=pad.t+ph+5){if(!started){ctx.moveTo(px,py);started=true}else ctx.lineTo(px,py)}}
+ctx.stroke();
+
+// Fill
+if(d.fill){ctx.globalAlpha=.08;ctx.fillStyle=d.color||'#2563eb';ctx.lineTo(tx(d.x[d.x.length-1]),ty(yMin));ctx.lineTo(tx(d.x[0]),ty(yMin));ctx.closePath();ctx.fill();ctx.globalAlpha=1}
+
+// Point marker
+if(d.marker){ctx.fillStyle=d.markerColor||'#6b7280';ctx.beginPath();ctx.arc(tx(d.marker.x),ty(d.marker.y),5,0,Math.PI*2);ctx.fill();
+ctx.fillStyle='#6b7280';ctx.font='10px -apple-system,sans-serif';ctx.textAlign='left';ctx.fillText(d.markerLabel||'',tx(d.marker.x)+8,ty(d.marker.y)-6)}
+});
+
+// Legend
+if(datasets.length>1){var lx=pad.l+10,ly=pad.t+8;
+datasets.forEach(function(d,i){if(!d.label)return;
+ctx.fillStyle=d.color;ctx.fillRect(lx,ly+i*16,10,10);ctx.fillStyle='#1e293b';ctx.font='11px -apple-system,sans-serif';ctx.textAlign='left';ctx.fillText(d.label,lx+14,ly+i*16+9)})}
+
+// Border
+ctx.strokeStyle='#e2e8f0';ctx.lineWidth=1;ctx.strokeRect(pad.l,pad.t,pw,ph)}
+
+// ─── Update All ───────────────────────
+function UA(){
+gen();
+// KPIs
+var kp=document.getElementById('kpis');if(kp){var cls=['bl','pu','gn','or','rd'],html='';var i=0;
+for(var nm in cc){var d=cc[nm],mx=Math.max.apply(null,d.r);html+='<div class="kpi"><div class="kl">'+nm+'</div><div class="kv '+cls[i%5]+'">'+fN(mx)+'</div><div class="ks">Max at '+f$(d.s[d.r.indexOf(mx)])+'</div></div>';i++}kp.innerHTML=html}
+
+// Overlay chart
+var ds1=[];for(var nm in cc)ds1.push({x:cc[nm].s,y:cc[nm].r,color:CC[nm],label:nm});
+drawLine('cv1',ds1);
+
+// Single channel
+if(cc[ac]){document.getElementById('cv2t').textContent=ac+' — Response';
+var ds2=[{x:cc[ac].s,y:cc[ac].r,color:CC[ac],fill:true}];
+var avg=SP[ac]||0;if(avg>0){var tr=ss(avg,ch[ac]);var rv=rf(ch[ac].eq,tr,ch[ac].p);ds2[0].marker={x:avg,y:rv};ds2[0].markerLabel='Avg: '+f$(avg)}
+drawLine('cv2',ds2)}
+
+// Normalized
+var ds3=[];for(nm in cc){var mx2=Math.max.apply(null,cc[nm].r.map(Math.abs))||1;
+ds3.push({x:cc[nm].s,y:cc[nm].r.map(function(v){return v/mx2*100}),color:CC[nm],label:nm})}
+drawLine('cv3',ds3,{yMin:0,yLabel:'Normalized %',yFmt:function(v){return v.toFixed(0)+'%'}});
+
+// Marginal all
+var ds4=[];for(nm in cc)ds4.push({x:cc[nm].s,y:cc[nm].m,color:CC[nm],label:nm});
+drawLine('cv4',ds4,{yLabel:'Marginal (dR/dS)'});
+
+// Marginal single
+if(cc[ac]){document.getElementById('cv5t').textContent=ac+' — Marginal';
+drawLine('cv5',[{x:cc[ac].s,y:cc[ac].m,color:CC[ac],fill:true}],{yLabel:'Marginal (dR/dS)'})}
+
+// Table dropdown
+var sel=document.getElementById('tCh');if(sel){var cv=sel.value;sel.innerHTML='';for(nm in ch){var o=document.createElement('option');o.value=nm;o.textContent=nm;if(nm===cv)o.selected=true;sel.appendChild(o)}}
+TBL()}
+
+function TBL(){var nm=document.getElementById('tCh').value||Object.keys(ch)[0],d=cc[nm];if(!d)return;
+var tb=document.querySelector('#dtbl tbody'),st=Math.max(1,Math.floor(d.s.length/25)),html='';
+for(var i=0;i<d.s.length;i+=st){var s=d.s[i],r=d.r[i],m=d.m[i];
+html+='<tr><td>'+f$(s)+'</td><td>'+fN(r)+'</td><td>'+m.toFixed(6)+'</td><td>'+(s>0?(r/s).toFixed(4):'0')+'</td></tr>'}
+tb.innerHTML=html}
+
+function OPT(){var budget=parseFloat(document.getElementById('tBud').value)||1e5;
+var ns=Object.keys(ch),n=ns.length;var al=ns.map(function(){return budget/n});var step=budget*.001;
+for(var it=0;it<2000;it++){var mg=al.map(function(s,i){return cms(ns[i],s)});var mxi=0,mni=0;
+for(var i=1;i<n;i++){if(mg[i]>mg[mxi])mxi=i;if(mg[i]<mg[mni])mni=i}
+if(mxi===mni||Math.abs(mg[mxi]-mg[mni])<1e-8)break;var tr=Math.min(step,al[mni]);al[mni]-=tr;al[mxi]+=tr;al=al.map(function(v){return Math.max(v,0)})}
+var tot=al.reduce(function(a,b){return a+b},0);if(tot>0)al=al.map(function(v){return v*budget/tot});
+oR={};ns.forEach(function(nm,i){oR[nm]={spend:al[i],response:crs(nm,al[i]),marginal:cms(nm,al[i])}});
+document.getElementById('oRes').style.display='block';
+var ct=ns.reduce(function(s,n){return s+crs(n,SP[n]||0)},0);
+var ot=ns.reduce(function(s,n){return s+oR[n].response},0);
+var lift=ct>0?((ot-ct)/ct*100):0;
+document.getElementById('oKpi').innerHTML='<div class="kpi"><div class="kl">Budget</div><div class="kv bl">'+f$(budget)+'</div></div><div class="kpi"><div class="kl">Current</div><div class="kv">'+fN(ct)+'</div></div><div class="kpi"><div class="kl">Optimized</div><div class="kv gn">'+fN(ot)+'</div></div><div class="kpi"><div class="kl">Lift</div><div class="kv"><span class="lift '+(lift>=0?'pos':'neg')+'">'+(lift>=0?'+':'')+lift.toFixed(1)+'%</span></div></div>';
+var mx=Math.max.apply(null,ns.map(function(n){return Math.max(SP[n]||0,oR[n].spend)}))||1;
+document.getElementById('bCur').innerHTML=ns.map(function(n){var s=SP[n]||0,pct=s/mx*100;return'<div class="bar-row"><span class="bl">'+n+'</span><div class="bt"><div class="bf" style="width:'+pct+'%;background:'+CC[n]+'">'+(pct>18?f$(s):'')+'</div></div><span class="bv">'+f$(s)+'</span></div>'}).join('');
+document.getElementById('bOpt').innerHTML=ns.map(function(n){var s=oR[n].spend,pct=s/mx*100;return'<div class="bar-row"><span class="bl">'+n+'</span><div class="bt"><div class="bf" style="width:'+pct+'%;background:'+CC[n]+'">'+(pct>18?f$(s):'')+'</div></div><span class="bv">'+f$(s)+'</span></div>'}).join('')}
+
+function dl(fn,txt){var a=document.createElement('a');a.href=URL.createObjectURL(new Blob([txt],{type:'text/plain'}));a.download=fn;a.click()}
+function ECSV(){var csv='Channel,Spend,Response,Marginal,ROI\n';for(var nm in cc){var d=cc[nm],st=Math.max(1,Math.floor(d.s.length/40));for(var i=0;i<d.s.length;i+=st)csv+=nm+','+d.s[i].toFixed(2)+','+d.r[i].toFixed(2)+','+d.m[i].toFixed(6)+','+(d.s[i]>0?(d.r[i]/d.s[i]).toFixed(6):'0')+'\n'}dl('mmm_curves.csv',csv)}
+function EJSON(){dl('mmm_config.json',JSON.stringify(ch,null,2))}
+
+init();rtabs();rctrl();UA();
+window.addEventListener('resize',function(){UA()});
+</script>
+</body>
+</html>
